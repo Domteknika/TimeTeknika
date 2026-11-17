@@ -1,0 +1,60 @@
+{
+  "name": "timeteknika-desktop",
+  "productName": "TimeTeknika",
+  "version": "1.1.0",
+  "private": true,
+  "description": "TimeTeknika pour Windows — chrono et raccourcis globaux",
+  "author": "Domteknika",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "icons": "node scripts/icons.cjs",
+    "dist": "node scripts/icons.cjs && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "ch.domteknika.timeteknika",
+    "artifactName": "TimeTeknika-Setup-${version}.${ext}",
+    "directories": {
+      "output": "../.qa/desktop-release"
+    },
+    "files": [
+      "*.cjs",
+      "assets/*",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": "nsis",
+      "icon": "assets/app.ico",
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TimeTeknika",
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "fr_FR"
+      ],
+      "runAfterFinish": false,
+      "installerIcon": "assets/app.ico",
+      "uninstallerIcon": "assets/app.ico"
+    },
+    "extraResources": [
+      {
+        "from": "assets/app.ico",
+        "to": "timeteknika.ico"
+      }
+    ]
+  },
+  "packageManager": "pnpm@11.25.0"
+}

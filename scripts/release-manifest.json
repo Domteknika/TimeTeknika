@@ -1,0 +1,30 @@
+{
+  "version": "2026.11.16-journal-1",
+  "files": {
+    "public/app.js": "b0d1d583fa25341fe88878cdd417e01ea431e8cc0faa5228c2540e8fecbf453a",
+    "public/calendar-utils.js": "4961234cc27da3601cbdd4e3488afd315758f016f53962db67173b1a6844a725",
+    "public/export-builder.js": "b6b7f2afa5d191ccc431761422739b4a3ab2fcf6d39024b1ceb723744360f0ca",
+    "public/export-config.js": "fc35d9bed5cea81b80fdc63825d6991a557e70500887f492dc3b363bd6143222",
+    "public/favicon.svg": "d6ccfd16b4883769f1a72deb56c9d8ea7c204cb76b97076c0db22637a44c365c",
+    "public/index.html": "cb243a22bb1db39a619b4278bfedd40497bf291f74c6bc6a3f71be57e967ebfe",
+    "public/project-colors.js": "51eefd207aab4a6d28f649dac277e4f516ea97b6a3beac3e69944356a8dc1c3d",
+    "public/release.js": "befd454f7b5b565f448965cb148e282ed0c0c443613f3960b007c46d3c3e5689",
+    "public/report-charts.js": "0ebe6a7b0e1fdb1b973e7f6ccfed6a149095f6ecc43962043242b59c48ed12db",
+    "public/rich-select.js": "fb2f5b6e573757087e14e405f34a82a6f1b15959c1f6307cabe5d7b067c6e404",
+    "public/styles.css": "5b4bf920a17d7fb4050b00c3707ca967ee998ee375389cee65f8448bfd35f7b5",
+    "public/task-projects.js": "4541509f3399a443e29f295d8dbc8bbc28fa9bb6c0d2ef520629601ae56abbca",
+    "scripts/backup.mjs": "90efa3723a523f803bd2addeb5285a03a6c81397f25c27df636078f39660790e",
+    "scripts/install-update.sh": "5ae9d3d616d7b37356757665751ef668261cfffaa6156a153502b78dbef4d537",
+    "scripts/reset-password.mjs": "64117ebbd799c1c5ce24f73b870a278f1aabda25adeeedad3940d1a6237b85a0",
+    "scripts/verify-journal.mjs": "6ec10a7e8c08a820e908db909d4c53239f01a05aad557b643aecd30c39a7209e",
+    "scripts/verify-release.mjs": "ff97dcf4a8b83757baf10af62025b63c66bddef926557bf8872f6621515c298a",
+    "server/auth.mjs": "52a51925e6ee8f3e417d19b0c94303020854a39428f53a92b525698b80e8a080",
+    "server/catalog-delete.mjs": "f2d396889a3b69e46eab68d1f97c903df8475eb40aa97c4f72e3332dda5a38c2",
+    "server/domain.mjs": "5e68bae54b2f2d76da41977a0936fcb322402e26c7600b05742c6a3fcdb5332c",
+    "server/export-files.mjs": "5d1c3bf148f47ef8ff4adf1efd6e0af397ce81095518aa2cf569efe551bb381e",
+    "server/exports.mjs": "25b328427cd021be5362c5cbcf047aab3a55420c75606df6532cd7a54e497872",
+    "server/index.mjs": "2e7fa08b36f4a362354d8f9305c5770006a771c03881649ea8c6fe984c068576",
+    "server/journal.mjs": "5d109cda503a19256b32c1ce5faa1ad2a8fb14de61d936e61b872b6b4b45ccbb",
+    "server/store.mjs": "7f01a7d8a7668368a7cd5f4721639f02deb527f23a1ad96a7420b48d7b59d81d"
+  }
+}

@@ -1,0 +1,10 @@
+data
+.env
+.git
+.qa
+.cache
+node_modules
+desktop
+coverage
+*.log
+

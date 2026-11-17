@@ -1,0 +1,21 @@
+services:
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    # Linux host networking: reach the applications bound to host loopback.
+    # Only the listen directives below determine exposed sockets.
+    network_mode: host
+    volumes:
+      - ./conf.d:/etc/nginx/conf.d:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
