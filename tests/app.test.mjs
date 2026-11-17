@@ -120,6 +120,8 @@ test('Vue horaire : préférence personnelle persistante et validation 7 h–18 
   const {client}=await fixture(t),emma=await client('demo-emma'),other=await client('demo-emma'),alex=await client('demo-alex');
   assert.equal((await emma.request('/api/preferences','PATCH',{calendarRange:'workday'})).status,200);
   assert.equal((await other.request('/api/state')).data.me.preferences.calendarRange,'workday');
+  assert.equal((await emma.request('/api/preferences','PATCH',{calendarRange:'extended'})).status,200);
+  assert.equal((await other.request('/api/state')).data.me.preferences.calendarRange,'extended');
   assert.equal((await alex.request('/api/state')).data.me.preferences.calendarRange,undefined);
   assert.equal((await emma.request('/api/preferences','PATCH',{calendarRange:'arbitrary'})).status,400);
   assert.equal((await emma.request('/api/preferences','PATCH',{calendarRange:'full'})).status,200);

@@ -1,4 +1,10 @@
-# TimeTeknika — premier prototype
+# TimeTeknika — refonte React locale
+
+Cette branche prépare la nouvelle interface React + TypeScript avec shadcn/ui. **SQLite et les données existantes sont conservés. Aucun déploiement ni push automatique.**
+
+Pour essayer le build local, double-cliquer sur **Apercu TimeTeknika React.cmd**, puis ouvrir http://127.0.0.1:4312. Cet aperçu utilise des données fictives séparées. Pour développer : `pnpm install --frozen-lockfile`, puis `pnpm dev`. Voir la [notice de la refonte](docs/REFONTE-REACT.md).
+
+Les commandes et fonctions historiques ci-dessous restent documentées pour comparaison.
 
 Un suivi de temps collaboratif en français, inspiré du fonctionnement documenté de Toggl Focus. Les clients, projets et tâches sont partagés ; chaque entrée de temps appartient à une personne.
 
@@ -53,7 +59,7 @@ Les onglets d’un même navigateur partagent le cookie de connexion : changer d
 
 ## Données et architecture
 
-Serveur HTTP Node.js et SQLite via `node:sqlite`, interface en modules JavaScript natifs et CSS. Ce choix permet de faire tourner le prototype sans téléchargement de paquets. La proposition initiale React/TypeScript était indicative ; une migration de l’interface reste possible une fois les parcours validés.
+Serveur HTTP Node.js et SQLite via `node:sqlite`. La nouvelle interface utilise React, TypeScript, Vite, Tailwind CSS et shadcn/ui ; les graphiques utilisent Recharts. Les calculs métier et les exports restent sur le serveur. L’ancienne interface est conservée pour comparaison avec `--legacy`.
 
 La base est le fichier local de l’application, jamais un fichier lu/écrit directement par plusieurs navigateurs. Le même serveur est utilisé sur le poste de démonstration et dans le futur conteneur. SQLite utilise WAL, des transactions et des contraintes. Le processus serveur reste unique : ce prototype ne prévoit pas plusieurs réplicas.
 
@@ -141,7 +147,7 @@ Les tests couvrent les droits, les créations multi-personnes, l’idempotence, 
 
 - Remplissage d’un Excel existant, tableaux croisés, congés, génération de factures, budgets, import Toggl et intégrations : étapes suivantes. Le PDF actuel est un relevé de prestations à joindre à une facture.
 - Exports : maximum 370 jours et 20 000 entrées par génération ; l’aperçu affiche les 200 premières lignes, les fichiers contiennent toutes les lignes. Modèles personnels uniquement (50 par personne), aucun envoi automatique. Les valeurs des chronos sont figées à l’instant de génération ; les colonnes Début/Fin retenus correspondent à la portion réellement exportée.
-- Pas encore de désactivation de compte ni de responsable limité à certains projets. La récupération sans email passe par un autre responsable ou le script serveur de secours documenté dans la notice.
+- Les responsables peuvent modifier les identifiants et retirer les accès dans Mon profil. Les heures et l’historique restent conservés ; un chrono actif bloque le retrait. Pas encore de responsable limité à certains projets. La récupération sans email passe par un autre responsable ou le script serveur de secours documenté dans la notice.
 - Calendrier de consultation : pas de glisser-déposer ni de planning prévisionnel. Les chevauchements volontaires peuvent superposer des blocs.
 - Les rapports chargent les entrées autorisées en mémoire serveur ; pagination et optimisation à prévoir avec le volume réel.
 - Le rappel n’est visible que dans l’application ouverte ; aucune notification email ou système.

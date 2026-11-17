@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { fail } from './domain.mjs';
 
 function plan(store,user,kind,id){
-  if(user.role!=='manager')fail(403,'Seul un responsable peut supprimer les éléments partagés.');
+  if(!['manager','admin'].includes(user.role))fail(403,'Seul un responsable peut supprimer les éléments partagés.');
   if(!['clients','projects','tasks'].includes(kind))fail(404,'Élément introuvable.');
   const item=store.one(`SELECT * FROM ${kind} WHERE id=?`,id);
   if(!item)fail(404,'Élément introuvable.');

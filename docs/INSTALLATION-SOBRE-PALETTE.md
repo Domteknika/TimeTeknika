@@ -9,8 +9,8 @@ Les fonctionnalités précédentes (suppression avec conservation des heures, ca
 ## 1. PowerShell sur le PC
 
 ```powershell
-scp "C:\Users\Cholier\Documents\Git\Toggleteknika\.qa\releases\timeteknika-2026.11.10-sobre-palette-1.tar.gz" dtkserver@10.69.1.146:/opt/timeteknika/
-ssh dtkserver@10.69.1.146
+scp "C:\chemin\TimeTeknika\.qa\releases\timeteknika-2026.11.10-sobre-palette-1.tar.gz" serveur-timeteknika:/opt/timeteknika/
+ssh serveur-timeteknika
 ```
 
 ## 2. Session SSH sur le serveur

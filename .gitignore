@@ -6,3 +6,27 @@ coverage/
 .qa/
 .cache/
 
+
+dist/
+playwright-report/
+test-results/
+.env.*
+!.env.example
+
+.cache-dependencies-before-repair/
+
+# Private local settings and database artifacts
+server.local.txt
+.private-identifiers.local.json
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.key
+*.pem
+*.p12
+*.pfx
+*.dump
+*.bak
+backups/

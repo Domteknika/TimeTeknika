@@ -14,8 +14,8 @@ Cette archive regroupe la correction des blocs du calendrier, la vue 7 h–18 h 
 ## 1. Transfert depuis PowerShell sur le PC
 
 ```powershell
-scp "C:\Users\Cholier\Documents\Git\Toggleteknika\.qa\releases\timeteknika-suppression-vues-20261110.tar.gz" dtkserver@10.69.1.146:/opt/timeteknika/
-ssh dtkserver@10.69.1.146
+scp "C:\chemin\TimeTeknika\.qa\releases\timeteknika-suppression-vues-20261110.tar.gz" serveur-timeteknika:/opt/timeteknika/
+ssh serveur-timeteknika
 ```
 
 ## 2. Installation depuis la session SSH

@@ -9,8 +9,8 @@ L’archive inclut les corrections précédentes du calendrier proportionnel, la
 ## Sur le PC, dans PowerShell
 
 ```powershell
-scp "C:\Users\Cholier\Documents\Git\Toggleteknika\.qa\releases\timeteknika-palette-20261110.tar.gz" dtkserver@10.69.1.146:/opt/timeteknika/
-ssh dtkserver@10.69.1.146
+scp "C:\chemin\TimeTeknika\.qa\releases\timeteknika-palette-20261110.tar.gz" serveur-timeteknika:/opt/timeteknika/
+ssh serveur-timeteknika
 ```
 
 ## Sur le serveur, dans la session SSH

@@ -5,8 +5,8 @@ Version : **2026.11.16-journal-1**. Cette mise à jour doit être envoyée au se
 ## 1. PowerShell sur le PC
 
 ```powershell
-scp "C:\Users\Cholier\Documents\Git\Toggleteknika\.qa\releases\timeteknika-2026.11.16-journal-1.tar.gz" dtkserver@10.69.1.146:/opt/timeteknika/
-ssh dtkserver@10.69.1.146
+scp "C:\chemin\TimeTeknika\.qa\releases\timeteknika-2026.11.16-journal-1.tar.gz" serveur-timeteknika:/opt/timeteknika/
+ssh serveur-timeteknika
 ```
 
 ## 2. Session SSH sur le serveur

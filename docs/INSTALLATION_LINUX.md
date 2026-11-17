@@ -114,7 +114,7 @@ sudo chown "$USER:$(id -gn)" /opt/timeteknika
 Dans **Windows PowerShell**, depuis le projet :
 
 ```powershell
-cd C:\Users\Cholier\Documents\Git\Toggleteknika
+cd C:\chemin\TimeTeknika
 tar -czf "$env:TEMP\timeteknika-code.tar.gz" Dockerfile compose.yaml package.json pnpm-lock.yaml .dockerignore .env.example server public scripts docs README.md
 scp "$env:TEMP\timeteknika-code.tar.gz" admintek@192.168.1.50:/opt/timeteknika/
 ```

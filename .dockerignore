@@ -8,3 +8,16 @@ desktop
 coverage
 *.log
 
+
+.cache-dependencies-before-repair
+test-results
+playwright-report
+
+.env.*
+server.local.txt
+.private-identifiers.local.json
+*.sqlite*
+*.db
+*.key
+*.pem
+backups

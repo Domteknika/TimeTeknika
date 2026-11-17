@@ -25,7 +25,7 @@ export function validateExportConfig(input,user) {
   if(config.period.preset==='custom'){midnight(config.period.from);midnight(config.period.to);}
   const ids=(value,label,limit=500)=>{if(!Array.isArray(value)||value.length>limit||value.some(v=>typeof v!=='string'||v.length>100))fail(400,`${label} invalide.`);return [...new Set(value)];};
   for(const key of ['people','clients','projects','tasks'])if(config.filters[key]!==null)config.filters[key]=ids(config.filters[key],key);
-  if(user.role!=='manager'&&config.filters.people?.some(value=>value!==user.id))fail(403,'Vous pouvez exporter uniquement vos propres heures.');
+  if(!['manager','admin'].includes(user.role)&&config.filters.people?.some(value=>value!==user.id))fail(403,'Vous pouvez exporter uniquement vos propres heures.');
   config.filters.query=text(config.filters.query??'','Recherche',200,false);
   choice(config.filters.classification,['all','classified','unclassified'],'Classement');
   choice(config.filters.timers,['all','stopped','running'],'Chronos');
@@ -55,7 +55,7 @@ export function buildExport(entries,lookups,input,user,timestamp=Date.now()) {
   const selected=(values,id)=>values===null||values.includes(id??'__none__');
   const excluded=new Set(config.excluded),source=[],kept=[];
   for(const entry of entries){
-    if(entry.deleted||user.role!=='manager'&&entry.user_id!==user.id)continue;
+    if(entry.deleted||!['manager','admin'].includes(user.role)&&entry.user_id!==user.id)continue;
     const p=maps.projects.get(entry.project_id),t=maps.tasks.get(entry.task_id),c=maps.clients.get(p?.client_id);
     const start=Math.max(entry.start,period.begin),end=Math.min(entry.end??timestamp,period.end,timestamp);
     if(end<start||end===start&&!(entry.start>=period.begin&&entry.start<period.end))continue;

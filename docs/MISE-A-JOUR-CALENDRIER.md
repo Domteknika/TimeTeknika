@@ -7,8 +7,8 @@ Aucune modification des durées enregistrées, de la base ou du fichier `.env`. 
 ## Depuis PowerShell sur le PC
 
 ```powershell
-scp "C:\Users\Cholier\Documents\Git\Toggleteknika\.qa\releases\timeteknika-calendrier-20261110.tar.gz" dtkserver@10.69.1.146:/opt/timeteknika/
-ssh dtkserver@10.69.1.146
+scp "C:\chemin\TimeTeknika\.qa\releases\timeteknika-calendrier-20261110.tar.gz" serveur-timeteknika:/opt/timeteknika/
+ssh serveur-timeteknika
 ```
 
 ## Depuis la session SSH sur Ubuntu

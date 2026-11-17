@@ -9,7 +9,7 @@ L’archive ne remplace que `public/app.js` et cette notice. Aucun changement de
 ## 1. Envoyer depuis PowerShell sur votre PC
 
 ```powershell
-scp "C:\Users\Cholier\Documents\Git\Toggleteknika\.qa\releases\timeteknika-saisie-chrono-20261110.tar.gz" dtkserver@10.69.1.146:/opt/timeteknika/
+scp "C:\chemin\TimeTeknika\.qa\releases\timeteknika-saisie-chrono-20261110.tar.gz" serveur-timeteknika:/opt/timeteknika/
 ```
 
 ## 2. Installer sur le serveur Ubuntu

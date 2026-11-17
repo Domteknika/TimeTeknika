@@ -1,4 +1,7 @@
 import http from 'node:http';
+import { initializeAdministrator } from './admin-role.mjs';
+import { existsSync } from 'node:fs';
+import { serveReact } from './react-static.mjs';
 import { loginName, secret, accessConfig } from './auth.mjs';
 import { readFile } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
@@ -16,7 +19,7 @@ import { requestContext } from './journal.mjs';
 const diagnosticPaths = new Set(['/health','/api/info','/api/setup','/api/login','/api/demo-login','/api/state','/api/events','/api/logout','/api/reports','/api/exports/preview','/api/exports/download','/api/export-templates','/api/account/password','/api/clients','/api/projects','/api/tasks','/api/timer/start','/api/timer/stop','/api/entries','/api/preferences','/api/users','/api/journal','/api/journal/verify']);
 function diagnosticRoute(path) {
   if (diagnosticPaths.has(path)) return path;
-  const match = path.match(/^\/api\/(users|clients|projects|tasks|entries|export-templates)\/[^/]+(\/(?:history|restore|password|deletion-preview))?$/);
+  const match = path.match(/^\/api\/(users|clients|projects|tasks|entries|export-templates)\/[^/]+(\/(?:history|restore|password|username|role|deletion-preview))?$/);
   return match ? `/api/${match[1]}/:id${match[2] ?? ''}` : '/unknown';
 }
 
@@ -25,9 +28,10 @@ const sessionHash = token => createHash('sha256').update(token).digest('hex');
 const colors = PROJECT_COLORS.map(c=>c.value);
 const localRequest = req => ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress) && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(req.headers.host ?? '') && !req.headers['x-forwarded-host'];
 
-export function createApplication({ dbPath = join(root,'data','teknika.sqlite'), demo = false, secureCookies = false, publicOrigin = '', setupToken = '' } = {}) {
+export function createApplication({ dbPath = join(root,'data','teknika.sqlite'), demo = false, secureCookies = false, publicOrigin = '', setupToken = '', frontendDir = null, initialAdminUsername = '' } = {}) {
   const store = openStore(dbPath);
   if (demo) seedDemo(store);
+  try { initializeAdministrator(store,initialAdminUsername); } catch(error) { store.db.close(); throw error; }
   const streams = new Set(), attempts = new Map();
   const { db, one, all, run } = store;
   function authenticated(req) {
@@ -35,7 +39,7 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
     const session = token && one('SELECT * FROM sessions WHERE token=? AND expires>?',sessionHash(token),Date.now());
     const user = session && one('SELECT * FROM users WHERE id=? AND active=1', session.user_id);
     if (!user) fail(401,'Connectez-vous pour continuer.','unauthorized');
-    return { user, session };
+    return { user:{...user,role:store.effectiveRole(user)}, session };
   }
   function headers(res) {
     res.setHeader('Cache-Control','no-store, max-age=0');
@@ -133,6 +137,7 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
       context.route=diagnosticRoute(path);
       if(path==='/health' && method==='GET') { one('SELECT 1'); return json(res,200,{status:'ok',version:APP_VERSION}); }
       if(!path.startsWith('/api/')) {
+        if(frontendDir) { if(await serveReact(frontendDir,path,method,res)) return; fail(404,'Page introuvable.'); }
         if(method!=='GET' && method!=='HEAD') fail(405,'Méthode non autorisée.');
         const files={'/':'index.html','/app.js':'app.js','/calendar-utils.js':'calendar-utils.js','/report-charts.js':'report-charts.js','/rich-select.js':'rich-select.js','/task-projects.js':'task-projects.js','/export-config.js':'export-config.js','/export-builder.js':'export-builder.js','/styles.css':'styles.css','/favicon.svg':'favicon.svg','/project-colors.js':'project-colors.js','/release.js':'release.js'};
         const file=files[path]; if(!file) fail(404,'Page introuvable.');
@@ -141,13 +146,18 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
         res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`}); return res.end(method==='HEAD'?undefined:buffer);
       }
       origin(req);
-      if(path==='/api/info' && method==='GET') return json(res,200,{setup:!one('SELECT 1 FROM users LIMIT 1'),demo:demo&&localRequest(req),demoUsers:demo&&localRequest(req)?all('SELECT id,name,role,color FROM users WHERE id LIKE ?','demo-%'):[]});
+      if(path==='/api/info' && method==='GET') return json(res,200,{setup:!one('SELECT 1 FROM users LIMIT 1'),demo:demo&&localRequest(req),demoUsers:demo&&localRequest(req)?all("SELECT u.id,u.name,CASE WHEN a.user_id IS NOT NULL THEN 'admin' ELSE u.role END role,u.color FROM users u LEFT JOIN user_admins a ON a.user_id=u.id WHERE u.active=1 AND u.id LIKE ?",'demo-%'):[]});
       if(path==='/api/setup' && method==='POST') {
         const data=await body(req);
         if(one('SELECT 1 FROM users LIMIT 1')) fail(409,'L’espace est déjà configuré.');
         if((setupToken && data.setupToken!==setupToken) || (!setupToken && !localRequest(req))) fail(403,'La configuration distante nécessite le jeton SETUP_TOKEN du serveur.');
         const name=text(data.name,'Nom',100), username=loginName(data,true), password=secret(data.password,true);
-        const uid=id(); run('INSERT INTO users(id,name,username,password,role,color) VALUES (?,?,?,?,?,?)',uid,name,username,passwordHash(password),'manager',colors[0]);
+        const uid=id(); db.exec('BEGIN IMMEDIATE');
+        try {
+          run('INSERT INTO users(id,name,username,password,role,color) VALUES (?,?,?,?,?,?)',uid,name,username,passwordHash(password),'manager',colors[0]);
+          run('INSERT INTO user_admins(user_id) VALUES (?)',uid);
+          db.exec('COMMIT');
+        } catch(error) { if(db.isTransaction)db.exec('ROLLBACK'); throw error; }
         return json(res,201,sessionFor(res,one('SELECT * FROM users WHERE id=?',uid)));
       }
       if(path==='/api/login' && method==='POST') {
@@ -171,7 +181,7 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
       context.actor=user.id;
       if(method!=='GET' && req.headers['x-csrf-token']!==session.csrf) fail(403,'Session de formulaire expirée. Rechargez la page.','csrf');
       if((path==='/api/journal'||path==='/api/journal/verify') && method==='GET') {
-        if(user.role!=='manager')fail(403,'Le journal est réservé aux responsables.');
+        if(!['manager','admin'].includes(user.role))fail(403,'Le journal est réservé aux responsables.');
         if(path.endsWith('/verify'))return json(res,200,store.verifyJournal());
         const before=url.searchParams.get('before'),level=url.searchParams.get('level'),category=url.searchParams.get('category'),requestId=url.searchParams.get('requestId');
         if(before!==null && (!/^[1-9]\d*$/.test(before)||!Number.isSafeInteger(Number(before))))fail(400,'Curseur invalide.');
@@ -185,7 +195,7 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
         const last=one('SELECT seq,hash FROM event_log ORDER BY seq DESC LIMIT 1');
         return json(res,200,{items,nextBefore:rows.length>100?items.at(-1).seq:null,checkpoint:{count:last.seq,hash:last.hash}});
       }
-      if(path==='/api/state' && method==='GET') return json(res,200,{...store.snapshot(user),csrf:session.csrf,demo:demo&&localRequest(req),access:user.role==='manager'?{url:publicOrigin,secure:secureCookies,demo}:undefined});
+      if(path==='/api/state' && method==='GET') return json(res,200,{...store.snapshot(user),csrf:session.csrf,demo:demo&&localRequest(req),access:['manager','admin'].includes(user.role)?{url:publicOrigin,secure:secureCookies,demo}:undefined});
       if(path==='/api/events' && method==='GET') {
         res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive','X-Accel-Buffering':'no'});
         res.write(`retry: 1500\nevent: connected\ndata: {"revision":${store.revision()}}\n\n`);
@@ -229,7 +239,7 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
       }
       if(path.startsWith('/api/entries/') && path.endsWith('/history') && method==='GET') {
         const eid=path.split('/')[3], entry=exists('entries',eid);
-        if(entry.user_id!==user.id && user.role!=='manager') fail(404,'Entrée introuvable.');
+        if(entry.user_id!==user.id && !['manager','admin'].includes(user.role)) fail(404,'Entrée introuvable.');
         return json(res,200,{items:all('SELECT a.*,u.name actor_name FROM audit a JOIN users u ON u.id=a.actor WHERE a.entity=? AND a.entity_id=? ORDER BY a.at DESC','entry',eid).map(a=>({...a,before:a.before_json?JSON.parse(a.before_json):null,after:a.after_json?JSON.parse(a.after_json):null,before_json:undefined,after_json:undefined}))});
       }
       if(/^\/api\/(tasks|projects|clients)\/[^/]+\/deletion-preview$/.test(path)&&method==='GET'){
@@ -252,7 +262,7 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
           return {ok:true};
         }
         if(/^\/api\/users\/[^/]+\/password$/.test(path) && method==='POST') {
-          if(user.role!=='manager') fail(403,'Seul un responsable peut réinitialiser un mot de passe.');
+          if(user.role!=='admin') fail(403,'Seul un administrateur peut réinitialiser un mot de passe.');
           const target=exists('users',path.split('/')[3]);
           if(target.id===user.id) fail(400,'Utilisez le changement de votre propre mot de passe.');
           run('UPDATE users SET password=? WHERE id=?',passwordHash(secret(data.password,true)),target.id);
@@ -291,7 +301,7 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
           const status=data.status??old?.status??'todo'; if(!['todo','doing','done'].includes(status)) fail(400,'Statut invalide.');
           const assignees=data.assignees??all('SELECT user_id FROM assignments WHERE task_id=?',tid).map(x=>x.user_id);
           if(!Array.isArray(assignees) || !assignees.length || assignees.length>100 || new Set(assignees).size!==assignees.length) fail(400,'Affectez au moins une personne, sans doublon.');
-          for(const uid of assignees) if(!one('SELECT 1 FROM users WHERE id=? AND active=1',uid)) fail(400,'Une personne affectée est inactive ou introuvable.');
+          for(const uid of assignees) if(!one('SELECT 1 FROM users WHERE id=? AND active=1',uid) && !(old?.assignees.includes(uid) && one('SELECT 1 FROM users WHERE id=?',uid))) fail(400,'Une personne affectée est inactive ou introuvable.');
           const archived=data.archived===undefined?(old?.archived??0):+!!data.archived;
           if(archived && one('SELECT 1 FROM entries WHERE task_id=? AND end IS NULL AND deleted=0',tid)) fail(409,'Un chrono est encore actif sur cette tâche.');
           if(old) run('UPDATE tasks SET name=?,description=?,project_id=?,status=?,archived=?,version=version+1 WHERE id=?',name,description,project.id,status,archived,tid);
@@ -355,7 +365,7 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
           if(data.reportChart!==undefined) { if(!['columns','line','pie','bars'].includes(data.reportChart)) fail(400,'Type de graphique invalide.'); allowed.reportChart=data.reportChart; }
           if(data.calendarDays!==undefined) { if(![5,7].includes(data.calendarDays)) fail(400,'Choisissez 5 ou 7 jours.'); allowed.calendarDays=data.calendarDays; }
           if(data.calendarZoom!==undefined) { if(![50,75,100,125,150,200].includes(data.calendarZoom)) fail(400,'Niveau de zoom invalide.'); allowed.calendarZoom=data.calendarZoom; }
-          if(data.calendarRange!==undefined) { if(!['full','workday'].includes(data.calendarRange)) fail(400,'Plage horaire invalide.'); allowed.calendarRange=data.calendarRange; }
+          if(data.calendarRange!==undefined) { if(!['full','workday','extended'].includes(data.calendarRange)) fail(400,'Plage horaire invalide.'); allowed.calendarRange=data.calendarRange; }
           if(data.calendarFit!==undefined) { if(typeof data.calendarFit!=='boolean')fail(400,'Ajustement du calendrier invalide.');allowed.calendarFit=data.calendarFit; }
           if(data.weeklyTargetMinutes!==undefined) { if(data.weeklyTargetMinutes!==null&&(!Number.isInteger(data.weeklyTargetMinutes)||data.weeklyTargetMinutes<0||data.weeklyTargetMinutes>10080)) fail(400,'L’objectif hebdomadaire doit être compris entre 0 et 168 heures.'); allowed.weeklyTargetMinutes=data.weeklyTargetMinutes; }
           if(data.balanceStartDate!==undefined) {
@@ -367,11 +377,55 @@ export function createApplication({ dbPath = join(root,'data','teknika.sqlite'),
           if(data.reminderHour!==undefined) { if(!Number.isInteger(data.reminderHour)||data.reminderHour<0||data.reminderHour>23) fail(400,'Heure invalide.'); allowed.reminderHour=data.reminderHour; }
           run('UPDATE users SET preferences=? WHERE id=?',JSON.stringify({...previous,...allowed}),user.id); return {ok:true};
         }
+        if(/^\/api\/users\/[^/]+\/username$/.test(path) && method==='PATCH') {
+          if(user.role!=='admin') fail(403,'Seul un administrateur peut modifier les identifiants.');
+          const target=exists('users',path.split('/')[3]);
+          if(!target.active) fail(409,'Ce compte a été retiré de l’équipe.','inactive_user');
+          const previousUsername=text(data.previousUsername,'Identifiant actuel',200);
+          if(previousUsername!==target.username) fail(409,'Cet identifiant a changé. Fermez cette fenêtre puis rouvrez le compte actualisé.','version_conflict');
+          const username=loginName({username:data.username},true);
+          if(one('SELECT id FROM users WHERE username=? AND id!=?',username,target.id)) fail(409,'Cet identifiant est déjà utilisé par un autre compte.','username_taken');
+          if(username!==target.username) {
+            run('UPDATE users SET username=? WHERE id=?',username,target.id);
+            store.audit(user,'user',target.id,'username-change',{id:target.id,username:target.username},{id:target.id,username});
+          }
+          return {ok:true,username};
+        }
+        if(/^\/api\/users\/[^/]+$/.test(path) && method==='DELETE') {
+          if(user.role!=='admin') fail(403,'Seul un administrateur peut supprimer un utilisateur.');
+          const target=exists('users',path.split('/')[3]);
+          if(target.id===user.id) fail(400,'Vous ne pouvez pas supprimer votre propre compte.','own_account');
+          if(text(data.confirmUsername,'Identifiant de confirmation',200)!==target.username) fail(409,'L’identifiant de confirmation ne correspond pas. Vérifiez le compte actualisé.','confirmation_mismatch');
+          if(!target.active) return {ok:true,removed:true};
+          if(store.effectiveRole(target)==='admin'&&one('SELECT COUNT(*) n FROM user_admins a JOIN users u ON u.id=a.user_id WHERE u.active=1').n<=1)fail(409,'Il faut conserver au moins un administrateur actif.','last_admin');
+          if(one('SELECT 1 FROM entries WHERE user_id=? AND end IS NULL AND deleted=0',target.id)) fail(409,'Cette personne a un chrono en cours. Elle doit l’arrêter avant le retrait de son accès.','running_timer');
+          run('UPDATE users SET active=0 WHERE id=?',target.id);
+          run('DELETE FROM sessions WHERE user_id=?',target.id);
+          store.audit(user,'user',target.id,'user-remove',{id:target.id,username:target.username,active:1},{id:target.id,username:target.username,active:0,sessionsRevoked:true});
+          return {ok:true,removed:true};
+        }
+        if(/^\/api\/users\/[^/]+\/role$/.test(path) && method==='PATCH') {
+          if(user.role!=='admin') fail(403,'Seul un administrateur peut modifier les rôles.');
+          const target=exists('users',path.split('/')[3]),previousRole=store.effectiveRole(target);
+          if(!target.active) fail(409,'Ce compte a été retiré de l’équipe.','inactive_user');
+          if(data.previousRole!==previousRole) fail(409,'Le rôle a changé. Fermez cette fenêtre puis rouvrez le compte actualisé.','version_conflict');
+          if(!['member','manager','admin'].includes(data.role))fail(400,'Rôle invalide.');
+          if(data.role===previousRole)return {ok:true,role:previousRole};
+          if(previousRole==='admin'&&data.role!=='admin'&&one('SELECT COUNT(*) n FROM user_admins a JOIN users u ON u.id=a.user_id WHERE u.active=1').n<=1)fail(409,'Il faut conserver au moins un administrateur actif.','last_admin');
+          run('UPDATE users SET role=? WHERE id=?',data.role==='admin'?'manager':data.role,target.id);
+          if(data.role==='admin')run('INSERT OR IGNORE INTO user_admins(user_id) VALUES (?)',target.id);
+          else run('DELETE FROM user_admins WHERE user_id=?',target.id);
+          run('DELETE FROM sessions WHERE user_id=?',target.id);
+          store.audit(user,'user',target.id,'role-change',{id:target.id,role:previousRole},{id:target.id,role:data.role,sessionsRevoked:true});
+          return {ok:true,role:data.role};
+        }
         if(path==='/api/users' && method==='POST') {
-          if(user.role!=='manager') fail(403,'Seul un responsable peut gérer les comptes.');
+          if(user.role!=='admin') fail(403,'Seul un administrateur peut gérer les comptes.');
           const name=text(data.name,'Nom',100),username=loginName(data,true),password=secret(data.password,true);
-            const uid=id(),role=data.role==='manager'?'manager':'member';
-          run('INSERT INTO users(id,name,username,password,role,color) VALUES (?,?,?,?,?,?)',uid,name,username,passwordHash(password),role,colors[all('SELECT id FROM users').length%colors.length]);
+            const uid=id(),role=data.role??'member';
+          if(!['member','manager','admin'].includes(role))fail(400,'Rôle invalide.');
+          run('INSERT INTO users(id,name,username,password,role,color) VALUES (?,?,?,?,?,?)',uid,name,username,passwordHash(password),role==='admin'?'manager':role,colors[all('SELECT id FROM users').length%colors.length]);
+          if(role==='admin')run('INSERT INTO user_admins(user_id) VALUES (?)',uid);
           store.audit(user,'user',uid,'create',null,{id:uid,name,username,role}); return {ok:true};
         }
         fail(404,'Route inconnue.');
@@ -404,7 +458,8 @@ if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))
   const demo=process.argv.includes('--demo')||process.env.DEMO_MODE==='1';
   const host=process.env.HOST||'127.0.0.1',port=Number(process.env.PORT||4310);
   if(demo && host!=='127.0.0.1' && host!=='localhost') throw Error('Le mode démo doit écouter uniquement sur localhost.');
-  const app=createApplication({dbPath:process.env.DATA_DIR?join(resolve(process.env.DATA_DIR),demo?'demo.sqlite':'teknika.sqlite'):join(root,'data',demo?'demo.sqlite':'teknika.sqlite'),demo,...accessConfig(process.env),setupToken:process.env.SETUP_TOKEN||''});
+  const frontendDir=process.env.FRONTEND_DIR?resolve(process.env.FRONTEND_DIR):!process.argv.includes('--legacy')&&existsSync(join(root,'dist/web/index.html'))?join(root,'dist/web'):null;
+  const app=createApplication({frontendDir,initialAdminUsername:process.env.INITIAL_ADMIN_USERNAME||'',dbPath:process.env.DATA_DIR?join(resolve(process.env.DATA_DIR),demo?'demo.sqlite':'teknika.sqlite'):join(root,'data',demo?'demo.sqlite':'teknika.sqlite'),demo,...accessConfig(process.env),setupToken:process.env.SETUP_TOKEN||''});
   app.server.listen(port,host,()=>console.log(`TimeTeknika ${demo?'(démo locale)':''} : http://${host}:${port}`));
   for(const signal of ['SIGINT','SIGTERM']) process.on(signal,async()=>{await app.close(); process.exit(0);});
 }

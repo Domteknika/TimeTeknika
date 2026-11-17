@@ -32,6 +32,7 @@ export function openStore(path) {
     CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY, actor TEXT NOT NULL REFERENCES users(id), entity TEXT NOT NULL, entity_id TEXT NOT NULL, owner TEXT REFERENCES users(id), action TEXT NOT NULL, before_json TEXT, after_json TEXT, at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS requests (user_id TEXT NOT NULL REFERENCES users(id), key TEXT NOT NULL, fingerprint TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(user_id,key));
     CREATE TABLE IF NOT EXISTS export_templates (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, config TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS user_admins (user_id TEXT PRIMARY KEY REFERENCES users(id));
     PRAGMA user_version=1;`);
   if (db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'email')) {
     db.exec('ALTER TABLE users RENAME COLUMN email TO username');
@@ -43,17 +44,18 @@ export function openStore(path) {
   // Initial tracking date for this workspace; personal overrides live in preferences.
   run('INSERT OR IGNORE INTO meta VALUES (?,?)', 'balance_start', midnight('2026-10-26'));
   const revision = () => one("SELECT value FROM meta WHERE key='revision'").value;
-  const userPublic = user => { const { password, preferences, ...rest } = user; return { ...rest, preferences: { balanceStartDate: dateInZone(one("SELECT value FROM meta WHERE key='balance_start'").value), ...JSON.parse(preferences) } }; };
+  const effectiveRole = user => one('SELECT 1 FROM user_admins WHERE user_id=?',user.id) ? 'admin' : user.role;
+  const userPublic = user => { const { password, preferences, ...rest } = user; return { ...rest, role: effectiveRole(user), preferences: { balanceStartDate: dateInZone(one("SELECT value FROM meta WHERE key='balance_start'").value), ...JSON.parse(preferences) } }; };
   function lookups() {
     return {
-      users: all('SELECT id,name,username,role,active,color FROM users ORDER BY name'),
+      users: all("SELECT u.id,u.name,u.username,CASE WHEN a.user_id IS NOT NULL THEN 'admin' ELSE u.role END role,u.active,u.color FROM users u LEFT JOIN user_admins a ON a.user_id=u.id ORDER BY u.name"),
       clients: all('SELECT * FROM clients ORDER BY name'),
       projects: all('SELECT * FROM projects ORDER BY name'),
       tasks: all('SELECT * FROM tasks ORDER BY name').map(task => ({ ...task, assignees: all('SELECT user_id FROM assignments WHERE task_id=?', task.id).map(x => x.user_id) }))
     };
   }
   function visibleEntries(user, deleted = false) {
-    return user.role === 'manager'
+    return ['manager','admin'].includes(effectiveRole(user))
       ? all('SELECT * FROM entries WHERE deleted=? ORDER BY start DESC', +deleted)
       : all('SELECT * FROM entries WHERE user_id=? AND deleted=? ORDER BY start DESC', user.id, +deleted);
   }
@@ -97,7 +99,7 @@ export function openStore(path) {
   function overlaps(user, start, end, exclude = null) {
     return all('SELECT id,description,start,end FROM entries WHERE user_id=? AND deleted=0 AND id!=? AND start<? AND COALESCE(end,?)>?', user.id, exclude ?? '', end, Date.now(), start);
   }
-  return { db, all, one, run, revision, lookups, snapshot, visibleEntries, audit, ownedEntry, classification, overlaps, userPublic,
+  return { db, all, one, run, revision, lookups, snapshot, visibleEntries, audit, ownedEntry, classification, overlaps, userPublic, effectiveRole,
     log: event => appendEvent(db,event), verifyJournal: checkpoint => verifyJournal(db,checkpoint) };
 }
 
@@ -112,6 +114,7 @@ export function seedDemo(store) {
       ['demo-lucas', 'Lucas Morel', 'lucas@demo.local', 'member', '#4f9c93']
     ];
     for (const [uid, name, username, role, color] of people) run('INSERT INTO users(id,name,username,password,role,color) VALUES (?,?,?,?,?,?)', uid, name, username, passwordHash(randomBytes(32).toString('hex')), role, color);
+    run('INSERT INTO user_admins(user_id) VALUES (?)','demo-alex');
     for (const [cid, name] of [['client-nova','Nova Immobilier'], ['client-atelier','Atelier Horizon'], ['client-interne','Interne']]) run('INSERT INTO clients(id,name,created_by) VALUES (?,?,?)', cid,name,'demo-alex');
     const projects = [
       ['project-cedres','Résidence Les Cèdres','client-nova','#a88be0','Études techniques et coordination du projet.'],
