@@ -71,7 +71,7 @@ test('Exports : validation stricte et total cohérent dans CSV, Excel et PDF',as
 });
 
 test('Exports HTTP : fichiers privés, CSRF, modèles versionnés et données synchronisées',async t=>{
-  const app=createApplication({dbPath:':memory:',demo:true});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));t.after(()=>app.close());
+  const app=await createApplication({dbPath:':memory:',demo:true});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));t.after(()=>app.close());
   const base=`http://127.0.0.1:${app.server.address().port}`;
   async function login(id){const res=await fetch(base+'/api/demo-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:id})});const json=await res.json();return {Cookie:res.headers.get('set-cookie').split(';')[0],'X-CSRF-Token':json.csrf,'Content-Type':'application/json'};}
   const alice=await login('demo-alex'),emma=await login('demo-emma'),same=await login('demo-alex');

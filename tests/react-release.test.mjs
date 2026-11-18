@@ -16,7 +16,7 @@ test('Livraison React : vérifie le build servi et refuse une archive avec trave
   t.after(()=>rm(folder,{recursive:true,force:true}));
   const frontendDir=join(folder,'web');await mkdir(frontendDir);
   await writeFile(join(frontendDir,'index.html'),'<html>React test</html>');
-  const app=createApplication({dbPath:':memory:',frontendDir});
+  const app=await createApplication({dbPath:':memory:',frontendDir});
   await new Promise(r=>app.server.listen(0,'127.0.0.1',r));t.after(()=>app.close());
   const baseUrl='http://127.0.0.1:'+app.server.address().port;
   const manifest={version:APP_VERSION,frontend:'react',files:{'dist/web/index.html':hash('<html>React test</html>')}};

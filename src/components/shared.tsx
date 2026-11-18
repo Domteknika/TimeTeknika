@@ -142,17 +142,23 @@ export function AsyncForm({
   onSubmit,
   submitLabel = "Enregistrer",
   onCancel,
+  actions,
+  destructive = false,
+  disabled = false,
 }: {
   children: ReactNode;
   onSubmit: (form: FormData) => Promise<void>;
   submitLabel?: string;
   onCancel?: () => void;
+  actions?: ReactNode;
+  destructive?: boolean;
+  disabled?: boolean;
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || disabled) return;
     const data = new FormData(event.currentTarget);
     setBusy(true);
     setError("");
@@ -166,16 +172,17 @@ export function AsyncForm({
   }
   return (
     <form onSubmit={submit} className="grid gap-5">
-      <fieldset disabled={busy} className="grid min-w-0 gap-5">
+      <fieldset disabled={busy || disabled} className="grid min-w-0 gap-5">
         {children}
         <ErrorMessage message={error} />
-        <div className="flex justify-end gap-2 border-t pt-4">
+        <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+          {actions && <div className="mr-auto">{actions}</div>}
           {onCancel && (
             <Button type="button" variant="outline" onClick={onCancel}>
               Annuler
             </Button>
           )}
-          <Button type="submit">
+          <Button type="submit" variant={destructive ? "destructive" : "default"}>
             {busy && <Loader2 className="animate-spin" />}
             {submitLabel}
           </Button>

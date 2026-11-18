@@ -8,7 +8,7 @@ import { createApplication } from '../server/index.mjs';
 import { APP_VERSION } from '../public/release.js';
 
 test('Installateur : vérifie la version, chaque fichier public et refuse un ancien serveur',async t=>{
-  const app=createApplication({dbPath:':memory:'});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));t.after(()=>app.close());
+  const app=await createApplication({dbPath:':memory:'});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));t.after(()=>app.close());
   const baseUrl=`http://127.0.0.1:${app.server.address().port}`,root=fileURLToPath(new URL('../',import.meta.url)),manifest={version:APP_VERSION,files:{}};
   for(const file of await readdir(new URL('../public/',import.meta.url))){manifest.files['public/'+file]=createHash('sha256').update(await readFile(new URL('../public/'+file,import.meta.url))).digest('hex');}
   const result=await verifyRelease({baseUrl,root,manifest});assert.equal(result.version,APP_VERSION);assert.equal(result.served,Object.keys(manifest.files).length);

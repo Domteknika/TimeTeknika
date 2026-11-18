@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useId, useRef } from "react";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspace } from "@/lib/app-context";
 import { api, ApiError } from "@/lib/api";
@@ -186,7 +187,7 @@ export function CatalogEditor({
   );
 }
 export function EntryEditor({
-  entry,
+  entry: initialEntry,
   initialStart,
   initialEnd,
   onClose,
@@ -197,6 +198,14 @@ export function EntryEditor({
   onClose: () => void;
 }) {
   const { state, clockOffset, mutate } = useWorkspace();
+  const [entry, setEntry] = useState(initialEntry);
+  const deleteHintId = useId();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
+  const [taskSaved, setTaskSaved] = useState(false);
+  const [taskError, setTaskError] = useState("");
+  const taskWrite = useRef(false);
   const [now] = useState(() => Date.now() + clockOffset.current);
   const [taskId, setTask] = useState(entry?.task_id ?? ""),
     [projectId, setProject] = useState(entry?.project_id ?? "");
@@ -217,17 +226,67 @@ export function EntryEditor({
     } catch { return null; }
   }, [start, end, running, now, entry, state.entries, state.me.id]);
   const latest = entry && state.entries.find((e) => e.id === entry.id);
-  const stale = entry && (!latest || latest.version !== entry.version);
+  const stale = entry && !savingTask && (!latest || latest.version !== entry.version);
+  async function chooseClassification(task: string, project: string, field: "task" | "project") {
+    if (taskWrite.current || deleting) return;
+    setTask(task);
+    setProject(project);
+    setTaskSaved(false);
+    setTaskError("");
+    if (!entry || field !== "task") return;
+    if (task === (entry.task_id ?? "") && project === (entry.project_id ?? "")) return;
+    if (stale || entry.user_id !== state.me.id) {
+      setTask(entry.task_id ?? ""); setProject(entry.project_id ?? "");
+      setTaskError("Cette entrée a changé. Fermez puis rouvrez-la avant de choisir une tâche.");
+      return;
+    }
+    taskWrite.current = true;
+    setSavingTask(true);
+    try {
+      const result = await mutate<{ entry: Entry }>("/api/entries/" + entry.id, "PATCH", {
+        task_id: task || null, project_id: project || null,
+        // Only classification changes: preserve persisted text and exact times,
+        // including any previously accepted overlap. Other fields remain drafts.
+        description: entry.description, start: new Date(entry.start).toISOString(),
+        end: entry.end === null ? null : new Date(entry.end).toISOString(),
+        version: entry.version, confirmOverlap: true,
+      }, "");
+      setEntry(result.entry);
+      setTaskSaved(true);
+    } catch (error) {
+      setTask(entry.task_id ?? ""); setProject(entry.project_id ?? "");
+      setTaskError((error instanceof ApiError && error.status === 0
+        ? "Impossible de confirmer l’enregistrement de la tâche. "
+        : "La tâche n’a pas été enregistrée. ") + (error as Error).message);
+    } finally {
+      taskWrite.current = false;
+      setSavingTask(false);
+    }
+  }
   return (
     <>
       <Modal
         title={entry ? "Modifier le temps" : "Ajouter du temps"}
         description="Ajustez votre activité et ses horaires."
-        onClose={onClose}
+        onClose={() => { if (!deleting && !taskWrite.current) onClose(); }}
       >
         <AsyncForm
           onCancel={onClose}
+          disabled={savingTask || deleting}
+          actions={entry?.user_id === state.me.id && (
+            <Button
+              type="button"
+              variant="destructive"
+              aria-label="Supprimer ce temps"
+              aria-describedby={entry.end === null ? deleteHintId : undefined}
+              disabled={!!stale || entry.end === null || deleting}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 /> Supprimer
+            </Button>
+          )}
           onSubmit={async (f) => {
+            if (taskWrite.current) return;
             if (stale)
               throw Error(
                 "Cette entrée a changé. Fermez cette fenêtre puis rouvrez la version actualisée.",
@@ -270,11 +329,14 @@ export function EntryEditor({
               taskId={taskId}
               projectId={projectId}
               originalTaskId={entry?.task_id}
-              onChange={(t, p) => {
-                setTask(t);
-                setProject(p);
-              }}
+              disabled={savingTask || deleting || !!stale}
+              onChange={(t, p, field) => { void chooseClassification(t, p, field); }}
             />
+            {entry && <p role="status" className="text-xs text-muted-foreground">
+              {savingTask ? "Enregistrement de la tâche…" : taskSaved ? "Tâche enregistrée." : "La tâche est enregistrée dès sa sélection."}
+              {" "}Les autres champs se valident avec Enregistrer.
+            </p>}
+            <ErrorMessage message={taskError} />
             <Button
               type="button"
               variant="link"
@@ -322,16 +384,46 @@ export function EntryEditor({
           {stale && (
             <ErrorMessage message="Cette entrée a été modifiée ailleurs. Fermez puis rouvrez-la avant d’enregistrer." />
           )}
+          {entry?.end === null && (
+            <p id={deleteHintId} className="text-xs text-muted-foreground">
+              Arrêtez le chrono avant de supprimer ce temps.
+            </p>
+          )}
         </AsyncForm>
       </Modal>
+      {confirmDelete && entry && (
+        <Modal
+          title="Supprimer ce temps ?"
+          description="Cette entrée sera retirée des rapports. Son historique sera conservé."
+          onClose={() => { if (!deleting) setConfirmDelete(false); }}
+        >
+          <AsyncForm
+            submitLabel="Supprimer"
+            destructive
+            onCancel={() => setConfirmDelete(false)}
+            onSubmit={async () => {
+              if (stale)
+                throw Error("Cette entrée a changé. Fermez cette fenêtre puis rouvrez la version actualisée.");
+              if (entry.end === null || entry.user_id !== state.me.id)
+                throw Error("Seuls vos temps arrêtés peuvent être supprimés.");
+              setDeleting(true);
+              try {
+                await deleteEntry(entry, mutate);
+                onClose();
+              } finally { setDeleting(false); }
+            }}
+          >
+            <p className="break-words text-sm">{entry.description || "Sans description"}</p>
+          </AsyncForm>
+        </Modal>
+      )}
       {createTask && (
         <CatalogEditor
           kind="tasks"
           initialProject={projectId}
           onClose={() => setCreateTask(false)}
           onCreated={(t) => {
-            setTask(t.id);
-            setProject(t.project_id);
+            void chooseClassification(t.id, t.project_id, "task");
           }}
         />
       )}

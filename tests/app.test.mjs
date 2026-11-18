@@ -9,7 +9,7 @@ import { backup, DatabaseSync } from 'node:sqlite';
 import { PROJECT_COLORS } from '../public/project-colors.js';
 
 async function fixture(t,options={}){
-  const app=createApplication({dbPath:':memory:',demo:true,...options});
+  const app=await createApplication({dbPath:':memory:',demo:true,...options});
   await new Promise(r=>app.server.listen(0,'127.0.0.1',r));
   const base=`http://127.0.0.1:${app.server.address().port}`;
   t.after(()=>app.close());
@@ -345,12 +345,12 @@ test('Sept sessions simultanées : aucun chrono perdu ni cumul partagé entre pe
 });
 test('Données, préférences et chrono conservés au redémarrage ; sauvegarde SQLite cohérente',async t=>{
   const {mkdir}=await import('node:fs/promises');const base=resolve('.qa');await mkdir(base,{recursive:true});const dir=await mkdtemp(join(base,'persistence-')),dbPath=join(dir,'test.sqlite');
-  const a=createApplication({dbPath,demo:true});await new Promise(r=>a.server.listen(0,'127.0.0.1',r));
+  const a=await createApplication({dbPath,demo:true});await new Promise(r=>a.server.listen(0,'127.0.0.1',r));
   const savedPreferences={reminderHour:17,calendarDays:5,calendarZoom:150,weeklyTargetMinutes:2550,reportChart:'pie',balanceStartDate:'2026-11-02',taskProjects:{'project-cedres':{pinned:true,collapsed:true}}};
   a.store.run("UPDATE users SET preferences=? WHERE id='demo-emma'",JSON.stringify(savedPreferences));
   a.store.run("INSERT INTO entries(id,user_id,description,start,end,created_at,updated_at) VALUES ('running','demo-emma','Persisté',?,NULL,?,?)",Date.now()-10000,Date.now(),Date.now());
   const copy=join(dir,'backup.sqlite');await backup(a.store.db,copy);await a.close();
-  const b=createApplication({dbPath});await new Promise(r=>b.server.listen(0,'127.0.0.1',r));t.after(()=>b.close());
+  const b=await createApplication({dbPath});await new Promise(r=>b.server.listen(0,'127.0.0.1',r));t.after(()=>b.close());
   assert.equal(b.store.one("SELECT description FROM entries WHERE id='running'").description,'Persisté');assert.equal(JSON.parse(b.store.one("SELECT preferences FROM users WHERE id='demo-emma'").preferences).reminderHour,17);
   assert.deepEqual(JSON.parse(b.store.one("SELECT preferences FROM users WHERE id='demo-emma'").preferences),savedPreferences);
   assert.equal(b.store.userPublic(b.store.one("SELECT * FROM users WHERE id='demo-lucas'")).preferences.balanceStartDate,'2026-10-26');
@@ -391,11 +391,11 @@ test('Identifiants sans email, huit caractères, changement et réinitialisation
 
 test('Migration de la colonne email : comptes, mots de passe et temps préservés',async t=>{
   const dir=await mkdtemp(resolve('.qa/auth-migration-')),dbPath=join(dir,'legacy.sqlite');
-  const original=createApplication({dbPath,demo:true});
+  const original=await createApplication({dbPath,demo:true});
   const entries=original.store.all('SELECT * FROM entries ORDER BY id');
   original.store.db.exec('ALTER TABLE users RENAME COLUMN username TO email');
   await original.close();
-  const migrated=createApplication({dbPath});
+  const migrated=await createApplication({dbPath});
   t.after(()=>migrated.close());
   assert.equal(migrated.store.one('SELECT username FROM users WHERE id=?','demo-alex').username,'alex@demo.local');
   assert.deepEqual(migrated.store.all('SELECT * FROM entries ORDER BY id'),entries);

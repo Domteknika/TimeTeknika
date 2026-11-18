@@ -1,6 +1,8 @@
 # TimeTeknika — refonte React locale
 
-Cette branche prépare la nouvelle interface React + TypeScript avec shadcn/ui. **SQLite et les données existantes sont conservés. Aucun déploiement ni push automatique.**
+Cette branche prépare la nouvelle interface React + TypeScript avec shadcn/ui et un stockage serveur asynchrone. **Les fichiers SQLite existants restent disponibles. Aucun import automatique, déploiement ni push automatique.**
+
+Le serveur utilise **PostgreSQL + Drizzle** lorsque `DATABASE_URL` est renseignée, et conserve SQLite sinon. La migration réelle des 13 tables et la bascule vers `2026.11.17-postgres-1` ont été effectuées sur le serveur, puis contrôlées en lecture seule le **17 novembre 2026**. Les empreintes des tables à l'import, la présence des utilisateurs et temps d'origine, l'historique exact et le checkpoint externe du journal sont vérifiés. Les sauvegardes SQLite et PostgreSQL sont conservées sur le serveur ; aucune installation PostgreSQL n'est nécessaire sur le PC. Le [guide PostgreSQL](docs/MIGRATION-POSTGRESQL.md) décrit l'import explicite et les contrôles.
 
 Pour essayer le build local, double-cliquer sur **Apercu TimeTeknika React.cmd**, puis ouvrir http://127.0.0.1:4312. Cet aperçu utilise des données fictives séparées. Pour développer : `pnpm install --frozen-lockfile`, puis `pnpm dev`. Voir la [notice de la refonte](docs/REFONTE-REACT.md).
 
@@ -28,7 +30,7 @@ node server/index.mjs --demo
 
 Ouvrir **http://127.0.0.1:4310**. Les trois boutons de connexion permettent de choisir Alex (responsable), Emma ou Lucas (membres). Ce sont des personnages fictifs. Alex voit les temps de toute l’équipe ; Emma et Lucas voient seulement leurs propres entrées.
 
-La démo écoute uniquement sur la boucle locale. Ses données restent dans `data/demo.sqlite`. Un redémarrage conserve les changements et le chrono actif. Ne pas utiliser la démo avec de vraies données ni l’exposer par un tunnel.
+La démo écoute uniquement sur la boucle locale. Sans `DEMO_DATABASE_URL`, ses données restent dans `data/demo.sqlite` ; les lanceurs Windows conservent ce mode SQLite. `pnpm demo` permet d'utiliser une base PostgreSQL de démonstration séparée après migration de son schéma. Un redémarrage conserve les changements et le chrono actif. Ne pas utiliser la démo avec de vraies données ni l’exposer par un tunnel.
 
 Les onglets d’un même navigateur partagent le cookie de connexion : changer de profil change le compte de ce navigateur. Pour tester deux personnes simultanément, utiliser deux navigateurs ou une fenêtre privée séparée. Deux onglets du même compte servent à tester la synchronisation de son chrono.
 
@@ -38,6 +40,8 @@ Les onglets d’un même navigateur partagent le cookie de connexion : changer d
 - Démarrage sans tâche ; rubrique **À classer** et rappel dans l’application à partir de l’heure choisie (16 h par défaut). Ces heures restent dans les totaux.
 - Création de clients, projets, tâches et affectations multiples **par tous les membres**. Créer un projet n’accorde aucun droit supplémentaire sur les temps.
 - Sélection d’une tâche → projet et client déduits. Entrée sans tâche : projet facultatif. Le client découle du projet ; un client interne peut regrouper le travail non facturable.
+- Dans **Modifier le temps**, le choix d’une tâche est enregistré immédiatement, y compris pour un chrono en cours. La description, les horaires et le choix du projet seul restent à valider avec **Enregistrer**. Une nouvelle entrée se valide aussi avec **Enregistrer**.
+- Le bouton **Supprimer** de cette fenêtre permet de retirer ses propres temps arrêtés après confirmation, avec une action **Rétablir**. L’historique est conservé ; arrêter le chrono avant de supprimer une entrée en cours.
 - Sélecteur de tâches organisé par projets repliables, avec client, couleur et nombre de tâches. Les projets épinglés sont placés en tête, dans la saisie d’une entrée comme dans le chrono ; ils remontent aussi dans la liste des projets du formulaire. Épingles et projets repliés sont personnels, conservés sur le serveur et synchronisés entre sessions. La recherche trouve les tâches des projets repliés sans changer cette organisation.
 - Liste et calendrier hebdomadaires : le créneau actif grandit chaque seconde avec le compteur, sans rechargement. Gestion du statut des tâches et archivage des projets/tâches. Arrêter un chrono ne termine pas la tâche commune.
 - Chaque date du calendrier affiche son temps travaillé, chrono actif et entrées sans tâche inclus. Les entrées traversant minuit sont réparties entre les journées dans le fuseau Europe/Zurich ; une journée vide affiche **0 h 00**.
@@ -59,9 +63,9 @@ Les onglets d’un même navigateur partagent le cookie de connexion : changer d
 
 ## Données et architecture
 
-Serveur HTTP Node.js et SQLite via `node:sqlite`. La nouvelle interface utilise React, TypeScript, Vite, Tailwind CSS et shadcn/ui ; les graphiques utilisent Recharts. Les calculs métier et les exports restent sur le serveur. L’ancienne interface est conservée pour comparaison avec `--legacy`.
+Serveur HTTP Node.js avec accès aux données asynchrones : PostgreSQL via Drizzle et le pool `pg`, ou SQLite via un adaptateur de compatibilité. La nouvelle interface utilise React, TypeScript, Vite, Tailwind CSS et shadcn/ui ; les graphiques utilisent Recharts. Les calculs métier et les exports restent sur le serveur. L’ancienne interface est conservée pour comparaison avec `--legacy`.
 
-La base est le fichier local de l’application, jamais un fichier lu/écrit directement par plusieurs navigateurs. Le même serveur est utilisé sur le poste de démonstration et dans le futur conteneur. SQLite utilise WAL, des transactions et des contraintes. Le processus serveur reste unique : ce prototype ne prévoit pas plusieurs réplicas.
+Seul le serveur accède à la base. SQLite utilise un fichier local avec WAL ; PostgreSQL utilise la connexion configurée et des migrations explicites. Un verrou transactionnel PostgreSQL conserve la sérialisation des mutations, tandis que les instantanés cohérents utilisent une transaction en lecture seule. Le processus applicatif reste unique : les flux SSE et limitations de connexion ne sont pas encore partagés entre plusieurs réplicas.
 
 Les données métier et préférences sont conservées **uniquement côté serveur**. Aucune utilisation de localStorage, sessionStorage, IndexedDB, service worker, cache métier ou service externe. Le navigateur reçoit les données nécessaires en mémoire pour les afficher, et un cookie de session HttpOnly/SameSite. Les réponses comportent `Cache-Control: no-store`. Les formulaires non envoyés n’ont pas de brouillon durable et seront perdus au rechargement.
 
@@ -76,29 +80,43 @@ Les responsables ont ici un périmètre **global sur l’équipe** ; les projets
 Arrêter la démo avec Ctrl+C, puis :
 
 ```powershell
-node server/index.mjs
+pnpm start
 ```
 
-La base séparée `data/teknika.sqlite` est créée. Ouvrir http://127.0.0.1:4310 et créer le premier responsable. Ajouter ensuite les personnes dans **Mon profil**. Les comptes n’ont aucune relation avec les identifiants Toggl.
+Sans `DATABASE_URL`, la base séparée `data/teknika.sqlite` est créée. Avec cette variable, appliquer d'abord `pnpm db:migrate` à la base PostgreSQL dédiée. Ouvrir http://127.0.0.1:4310 et créer le premier administrateur. Ajouter ensuite les personnes dans **Mon profil**. Les comptes n’ont aucune relation avec les identifiants Toggl.
 
-Variables disponibles : `HOST` (127.0.0.1), `PORT` (4310), `DATA_DIR`, `APP_URL` (adresse d’accès complète), `PUBLIC_ORIGIN` (ancien nom), `COOKIE_SECURE` (0/1 sans adresse configurée), `SETUP_TOKEN`. Configurer `APP_URL` avec l’adresse publique exacte ; une adresse HTTPS active automatiquement les cookies sécurisés. L’origine des requêtes, la session et le jeton CSRF sont vérifiés côté serveur.
+Variables disponibles : `HOST` (127.0.0.1), `PORT` (4310), `DATA_DIR`, `DATABASE_URL`, `DEMO_DATABASE_URL`, `APP_URL` (adresse d’accès complète), `PUBLIC_ORIGIN` (ancien nom), `COOKIE_SECURE` (0/1 sans adresse configurée), `SETUP_TOKEN`. Les commandes `pnpm start`, `pnpm demo` et `pnpm dev` chargent `.env` s'il existe. Configurer `APP_URL` avec l’adresse publique exacte ; une adresse HTTPS active automatiquement les cookies sécurisés. L’origine des requêtes, la session et le jeton CSRF sont vérifiés côté serveur.
 
-## Docker — configuration préparée
+## Docker — déploiement serveur
 
 La [notice complète Ubuntu Server + Cloudflare Tunnel](docs/INSTALLATION_LINUX.md) couvre l’installation depuis un serveur neuf, les comptes, les sauvegardes quotidiennes, la restauration et les mises à jour.
 
-Docker n’est pas installé sur la machine de réalisation : **le conteneur n’a pas été construit ni testé ici**. La configuration fournie doit être validée sur le serveur avant utilisation en équipe.
+Les images Docker ont été construites et testées sur le serveur. L'application répond sur la version PostgreSQL `2026.11.17-postgres-1`.
+
+Les images incluent les migrations et l'importeur SQLite. La procédure `scripts/deploy-postgres.sh` et la configuration `deploy/compose.postgres.yaml` ont été exécutées : essai d'import et restauration sur des bases isolées, vérification de douze opérations concurrentes avec deux pools natifs, sauvegarde finale puis bascule. Les permissions du rôle applicatif et le journal ont été contrôlés. L'installateur historique et les quatre étapes ci-dessous concernent le parcours SQLite ; pour une autre reprise de données, suivre le [guide d'import serveur](docs/MIGRATION-POSTGRESQL.md).
 
 1. Copier `.env.example` en `.env` et générer un `SETUP_TOKEN` aléatoire avec la commande indiquée dans ce fichier.
 2. Exécuter `docker compose up --build -d`.
 3. Ouvrir http://localhost:4310 et entrer le jeton lors de la création du premier responsable. Le jeton est requis à travers la couche réseau Docker.
 4. Vérifier la santé, créer deux comptes, tester les notifications et la restauration d’une sauvegarde sur une copie.
 
-Le port publié est limité à 127.0.0.1 et le mode démo est désactivé. Pour le tunnel Cloudflare ou le VPN, adapter volontairement le réseau, l’origine et HTTPS ; cette publication n’est pas effectuée par ce prototype. Un proxy doit transmettre le flux `/api/events` sans mise en tampon et tolérer les connexions longues. Le volume `teknika-data` conserve les données. Ne pas employer `docker compose down -v` pour une simple mise à jour : cela supprimerait ce volume.
+Après la migration PostgreSQL, depuis le répertoire applicatif du serveur, charger les deux fichiers de configuration pour toute commande Compose :
+
+```bash
+sudo docker compose --env-file .env --env-file .env.postgres ps
+sudo docker compose --env-file .env --env-file .env.postgres logs --tail=80 teknika
+sudo bash scripts/backup-linux.sh
+```
+
+La configuration `.env.postgres` appartient à root en mode `600` ; conserver ces permissions et les comptes séparés de migration et d'application. Ne pas publier ce fichier ni ses identifiants dans Git ou les rapports.
+
+Le port publié est limité à 127.0.0.1 et le mode démo est désactivé. Un proxy doit transmettre le flux `/api/events` sans mise en tampon et tolérer les connexions longues. Le volume `teknika-data` conserve les fichiers SQLite ; la configuration complémentaire crée le volume persistant `teknika-postgres`. Ne pas employer `docker compose down -v` pour une simple mise à jour : cela supprimerait les volumes de données.
 
 ## Sauvegarde et restauration
 
-Le script utilise l’API de sauvegarde SQLite pour produire un fichier cohérent, y compris pendant que l’application tourne ; ne pas copier uniquement la base active en ignorant ses fichiers WAL.
+Après migration, `sudo bash scripts/backup-linux.sh` appelle `scripts/backup-postgres.sh` : `pg_dump` crée une archive PostgreSQL, `pg_restore --list` en contrôle la liste, puis une empreinte SHA-256 est conservée. Les fichiers restent privés sur le serveur. Une restauration complète sur une base PostgreSQL isolée a été vérifiée avant la bascule, et l'audit final a confirmé les empreintes des sauvegardes conservées. La fréquence, la rétention et la copie sur un stockage séparé restent à vérifier avec la configuration d'exploitation du serveur.
+
+La procédure ci-dessous concerne **SQLite**. Le script utilise son API de sauvegarde pour produire un fichier cohérent, y compris pendant que l’application tourne ; ne pas copier uniquement la base active en ignorant ses fichiers WAL. `pnpm backup` charge `.env` et refuse une sauvegarde SQLite par défaut si `DATABASE_URL` est configurée.
 
 ```powershell
 node scripts/backup.mjs data/demo.sqlite data/backups/demo-verifie.sqlite
@@ -112,7 +130,7 @@ Pour restaurer : arrêter l’application, conserver le dossier de données actu
 
 Après mise à jour et redémarrage du serveur, les responsables disposent de **Mon profil → Journal de suivi**. Le journal présente 100 événements par page, avec filtres par niveau, catégorie et référence de requête. **Plus anciens** parcourt l’historique ; **Filtrer / Actualiser** revient aux événements récents. Les messages d’erreur affichent une référence également disponible dans l’en-tête HTTP `X-Request-ID` : la rechercher dans le journal relie l’erreur aux changements de la même requête.
 
-Le journal est conservé dans la même base SQLite (`event_log`), donc inclus dans les sauvegardes existantes. Il couvre :
+Le journal est conservé dans la base applicative sélectionnée, PostgreSQL ou SQLite, dans `event_log`. Pour SQLite, il reste inclus dans les sauvegardes existantes. Il couvre :
 
 - L’historique métier existant : créations et corrections des temps, suppressions et rétablissements, clients/projets/tâches, comptes et changements de mot de passe (sans le mot de passe).
 - Chaque mutation validée, dans la même transaction que ses données. Si son écriture au journal échoue, la mutation est annulée. Une requête rejouée avec sa clé d’idempotence ne duplique pas le changement métier.
@@ -121,9 +139,9 @@ Le journal est conservé dans la même base SQLite (`event_log`), donc inclus da
 
 Les traces techniques n’enregistrent ni corps de requête, ni paramètres d’URL, ni en-têtes, cookies, jetons ou mots de passe. L’historique métier contient les valeurs avant/après, notamment les descriptions de travail : les exports du journal restent des données internes. Les échecs HTTP sont enregistrés après l’annulation éventuelle de la transaction ; si la base ne permet plus de les écrire, un signal `journal-write-failed` avec la référence apparaît sur la sortie d’erreur du serveur. Les problèmes survenus uniquement dans le navigateur ou avant d’atteindre le serveur ne sont pas capturés.
 
-**Protection et limites.** Des triggers SQLite refusent UPDATE, DELETE et le remplacement des lignes du journal et de l’historique métier. Chaque événement est lié au précédent par une empreinte SHA-256. La chaîne et sa correspondance avec l’historique sont vérifiées au démarrage et via **Vérifier l’intégrité**. Une altération détectée empêche le démarrage ; conserver la base concernée et restaurer une sauvegarde vérifiée, sans réinitialiser le journal. À la première activation, l’ancien historique est intégré avec l’indication `legacy` : son contenu antérieur n’est pas certifié rétroactivement. Les modifications directes des tables métier par un outil SQL ne sont pas automatiquement journalisées.
+**Protection et limites.** Des triggers refusent la modification et la suppression du journal et de l'historique métier ; PostgreSQL interdit aussi `TRUNCATE`. Chaque événement est lié au précédent par une empreinte SHA-256. La chaîne et sa correspondance avec l’historique sont vérifiées au démarrage et via **Vérifier l’intégrité**. Une altération détectée empêche le démarrage ; conserver la base concernée et restaurer une sauvegarde vérifiée, sans réinitialiser le journal. L'activation historique SQLite peut intégrer l'ancien audit avec l'indication `legacy` ; PostgreSQL initialise uniquement une base entièrement vide et refuse un import partiel sans marqueur valide. Les modifications directes des tables métier par un outil SQL ne sont pas automatiquement journalisées.
 
-Cette protection est locale à l’application, pas un stockage WORM : une personne qui contrôle le fichier SQLite peut supprimer les protections et recalculer une chaîne. La suppression d’une fin valide ou le remplacement de la base ne sont détectables qu’en comparant avec un point de contrôle conservé séparément. **Exporter cette page** télécharge les événements affichés et le point de contrôle global (`count`, `hash`) ; ce fichier n’est pas un export complet du journal. Conserver régulièrement un tel fichier sur un autre emplacement protégé permet de comparer une sauvegarde :
+Cette protection est locale à l’application, pas un stockage WORM : une personne qui contrôle le fichier SQLite ou dispose des privilèges d'administration PostgreSQL peut supprimer les protections et recalculer une chaîne. La suppression d’une fin valide ou le remplacement de la base ne sont détectables qu’en comparant avec un point de contrôle conservé séparément. **Exporter cette page** télécharge les événements affichés et le point de contrôle global (`count`, `hash`) ; ce fichier n’est pas un export complet du journal. Conserver régulièrement un tel fichier sur un autre emplacement protégé permet de comparer une sauvegarde :
 
 ```powershell
 # Vérifier la chaîne et l’historique, en lecture seule
@@ -131,6 +149,9 @@ node scripts/verify-journal.mjs data/teknika.sqlite
 
 # Comparer aussi avec le point de contrôle d’un export conservé séparément
 node scripts/verify-journal.mjs data/backups/teknika.sqlite chemin/vers/timeteknika-journal-123.json
+
+# PostgreSQL configuré dans DATABASE_URL, sans initialisation ni réparation
+pnpm db:verify
 ```
 
 La commande renvoie un JSON et un code de sortie non nul si la vérification échoue. Elle accepte aussi comme point de contrôle le JSON produit par une vérification précédente. Le point de contrôle doit dater d’avant la sauvegarde comparée. Il n’y a aucune purge automatique ; surveiller l’espace disque et conserver les sauvegardes hors du serveur. Aucun stockage externe ni envoi automatique n’est configuré.
@@ -143,6 +164,8 @@ node --test tests/*.test.mjs
 
 Les tests couvrent les droits, les créations multi-personnes, l’idempotence, la concurrence des chronos, les conflits d’édition, les chevauchements, la synchronisation SSE, les cumuls, les journées de 23/25 h, l’installation, la connexion, la persistance et la sauvegarde. Les exports sont vérifiés par calculs, réouverture des fichiers Excel, génération PDF, routes HTTP et interactions DOM isolées du constructeur. Ils utilisent des bases temporaires ; les fichiers de la recette de persistance restent dans `.qa/`.
 
+Validation effectuée : **159 tests de la suite complète et 2 tests UI réussis**, ainsi que `pnpm typecheck`, `pnpm build` et `pnpm db:check`. Les contrôles ciblés ajoutés ensuite passent également : 5 tests CLI, 3 tests d'audit et 4 tests Linux de préparation des sauvegardes. `pnpm test:db` vérifie le schéma, le stockage, les routes PostgreSQL et l'import SQLite avec PGlite. Le déploiement Docker, l'import réel, la restauration et une sonde de concurrence sur deux pools `pg` sont validés sur le serveur. Les scénarios métier concurrents exhaustifs, les pannes du pool et les performances restent à tester sur PostgreSQL natif.
+
 ## Limites assumées de cette version
 
 - Remplissage d’un Excel existant, tableaux croisés, congés, génération de factures, budgets, import Toggl et intégrations : étapes suivantes. Le PDF actuel est un relevé de prestations à joindre à une facture.
@@ -152,6 +175,6 @@ Les tests couvrent les droits, les créations multi-personnes, l’idempotence, 
 - Les rapports chargent les entrées autorisées en mémoire serveur ; pagination et optimisation à prévoir avec le volume réel.
 - Le rappel n’est visible que dans l’application ouverte ; aucune notification email ou système.
 - Pas de mode hors ligne, de brouillons persistants ni de garantie de récupération d’un texte non envoyé.
-- La planification des sauvegardes est fournie pour systemd ; son activation, la copie hors serveur, la supervision et la recette distante restent à effectuer sur le serveur avant adoption. Les logs Docker sont limités à trois fichiers de 10 Mo.
+- La planification des sauvegardes est fournie pour systemd ; son activation, la rétention, la copie hors serveur et la supervision restent à vérifier. La migration et la restauration d'essai ont été validées sur le serveur. Les logs Docker sont limités à trois fichiers de 10 Mo.
 
 L’audit documentaire et le périmètre initial sont dans [l’étude Toggl](docs/ETUDE_TOGGL_STRATEGIE_V1.md) et [le registre des sources](docs/TOGGL_SOURCES.md).

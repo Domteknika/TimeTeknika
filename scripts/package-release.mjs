@@ -7,7 +7,7 @@ import { APP_VERSION } from '../public/release.js';
 import { releasePath } from './release-paths.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const sha=data=>createHash('sha256').update(data).digest('hex');
-const paths=['Dockerfile','.dockerignore','package.json','pnpm-lock.yaml','tsconfig.json','vite.config.ts','index.html','components.json'];
+const paths=['Dockerfile','.dockerignore','package.json','pnpm-lock.yaml','tsconfig.json','tsconfig.db.json','drizzle.config.ts','vite.config.ts','index.html','components.json','deploy/compose.postgres.yaml'];
 const generated=new Set(['scripts/release-manifest.json','scripts/release-files.sha256']);
 async function collect(directory){
   for(const entry of await readdir(resolve(root,directory),{withFileTypes:true})){
@@ -19,7 +19,7 @@ async function collect(directory){
     else throw Error('Lien non autorisé : '+path);
   }
 }
-for(const dir of ['server','public','scripts','src','web-assets','dist/web'])await collect(dir);
+for(const dir of ['server','public','scripts','src','web-assets','drizzle','dist/web'])await collect(dir);
 await readFile(resolve(root,'dist/web/index.html'));
 paths.sort();const files={};
 for(const path of paths)files[path]=sha(await readFile(resolve(root,path)));

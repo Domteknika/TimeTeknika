@@ -55,7 +55,7 @@ try {
         # Always reopen the existing local prototype, regardless of shell variables.
         $settings = @{
             HOST = '127.0.0.1'; PORT = '4310'; DEMO_MODE = '1'
-            APP_URL = $appUrl; DATA_DIR = (Join-Path $appRoot 'data'); COOKIE_SECURE = '0'; PUBLIC_ORIGIN = $appUrl
+            APP_URL = $appUrl; DATA_DIR = (Join-Path $appRoot 'data'); COOKIE_SECURE = '0'; PUBLIC_ORIGIN = $appUrl; DEMO_DATABASE_URL = ''
         }
         $previous = @{}
         try {

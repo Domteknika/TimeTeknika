@@ -62,7 +62,7 @@ test('Bureau : origine exacte et cookie technique uniquement, raccourcis en conf
 });
 
 test('Bureau HTTP : démarre et arrête sur le serveur existant, sans toucher aux collègues',async t=>{
-  const app=createApplication({dbPath:':memory:',demo:true});await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());
+  const app=await createApplication({dbPath:':memory:',demo:true});await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());
   const origin=`http://127.0.0.1:${app.server.address().port}`;
   const response=await fetch(origin+'/api/demo-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:'demo-alex'})});
   const cookie=response.headers.get('set-cookie').split(';')[0];

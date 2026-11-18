@@ -74,7 +74,7 @@ test('Journal : un point de contrôle détecte la suppression de la fin valide',
 });
 
 async function httpFixture(t) {
-  const app=createApplication({dbPath:':memory:',demo:true});
+  const app=await createApplication({dbPath:':memory:',demo:true});
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());
   const base=`http://127.0.0.1:${app.server.address().port}`;
   const client=()=>{

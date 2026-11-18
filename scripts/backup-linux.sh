@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
+if [[ -f .env.postgres ]]; then
+  exec bash scripts/backup-postgres.sh
+fi
 stamp=$(date -u +%Y%m%dT%H%M%S%NZ)
 name="timeteknika-${stamp}.sqlite"
 install -d -m 700 /var/backups/timeteknika

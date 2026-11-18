@@ -7,7 +7,7 @@ import { createApplication } from '../server/index.mjs';
 import { verifyRestoredDatabase } from '../scripts/verify-restored-database.mjs';
 
 async function fixture(t){
- const app=createApplication({dbPath:':memory:',demo:true});
+ const app=await createApplication({dbPath:':memory:',demo:true});
  await new Promise(r=>app.server.listen(0,'127.0.0.1',r));t.after(()=>app.close());
  const base='http://127.0.0.1:'+app.server.address().port;
  async function client(id){
@@ -70,7 +70,7 @@ test('Dernier administrateur protégé, rôles invalides et modifications concur
  assert.equal(app.store.one('SELECT COUNT(*) n FROM user_admins a JOIN users u ON u.id=a.user_id WHERE u.active=1').n,1);
 });
 test('Installation neuve : premier compte administrateur',async t=>{
- const app=createApplication({dbPath:':memory:',setupToken:'fixture-only'});
+ const app=await createApplication({dbPath:':memory:',setupToken:'fixture-only'});
  await new Promise(r=>app.server.listen(0,'127.0.0.1',r));t.after(()=>app.close());
  const response=await fetch('http://127.0.0.1:'+app.server.address().port+'/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Admin fictif',username:'admin.fixture',password:'fixture-pass123',setupToken:'fixture-only'})});
  assert.equal(response.status,201);assert.equal((await response.json()).me.role,'admin');
@@ -78,7 +78,7 @@ test('Installation neuve : premier compte administrateur',async t=>{
 });
 test('Migration additive : seul le compte explicitement désigné devient admin ; sauvegarde et ancien schéma conservés',async t=>{
  await mkdir('.qa',{recursive:true});const folder=await mkdtemp(resolve('.qa/admin-migration-'));t.after(()=>rm(folder,{recursive:true,force:true}));
- const source=join(folder,'old.sqlite');const original=createApplication({dbPath:source,demo:true});
+ const source=join(folder,'old.sqlite');const original=await createApplication({dbPath:source,demo:true});
  original.store.run("UPDATE users SET role='manager' WHERE id='demo-emma'");
  const beforeUsers=original.store.all('SELECT * FROM users ORDER BY id'),beforeEntries=original.store.all('SELECT * FROM entries ORDER BY id');
  await original.close();
@@ -86,21 +86,21 @@ test('Migration additive : seul le compte explicitement désigné devient admin 
  const result=await verifyRestoredDatabase(source,{initialAdminUsername:'alex@demo.local'});
  assert.equal(result.ok,true);assert.equal(result.unchangedTables,11);
  const untouched=new DatabaseSync(source,{readOnly:true});assert.equal(untouched.prepare("SELECT 1 FROM sqlite_master WHERE name='user_admins'").get(),undefined);untouched.close();
- const migrated=createApplication({dbPath:source,initialAdminUsername:'alex@demo.local'});
+ const migrated=await createApplication({dbPath:source,initialAdminUsername:'alex@demo.local'});
  assert.deepEqual(migrated.store.all('SELECT * FROM users ORDER BY id'),beforeUsers);
  assert.deepEqual(migrated.store.all('SELECT * FROM entries ORDER BY id'),beforeEntries);
  assert.equal(migrated.store.snapshot(migrated.store.one("SELECT * FROM users WHERE id='demo-alex'")).me.role,'admin');
  assert.equal(migrated.store.snapshot(migrated.store.one("SELECT * FROM users WHERE id='demo-emma'")).me.role,'manager');
  await migrated.close();
- const restarted=createApplication({dbPath:source,initialAdminUsername:'emma@demo.local'});
+ const restarted=await createApplication({dbPath:source,initialAdminUsername:'emma@demo.local'});
  assert.equal(restarted.store.one('SELECT COUNT(*) n FROM user_admins').n,1);
  assert.equal(restarted.store.one("SELECT COUNT(*) n FROM event_log WHERE action='administrator-initialized'").n,1);
  assert.equal(restarted.store.verifyJournal().ok,true);await restarted.close();
 });
 test('Initialisation refuse un compte inconnu ou un membre, sans accorder de privilèges',async t=>{
  await mkdir('.qa',{recursive:true});const folder=await mkdtemp(resolve('.qa/admin-reject-'));t.after(()=>rm(folder,{recursive:true,force:true}));
- const source=join(folder,'old.sqlite');const original=createApplication({dbPath:source,demo:true});
+ const source=join(folder,'old.sqlite');const original=await createApplication({dbPath:source,demo:true});
  original.store.run('DELETE FROM user_admins');await original.close();
- for(const username of ['unknown.test','emma@demo.local'])assert.throws(()=>createApplication({dbPath:source,initialAdminUsername:username}),/responsable existant et actif/);
+ for(const username of ['unknown.test','emma@demo.local'])await assert.rejects(()=>createApplication({dbPath:source,initialAdminUsername:username}),/responsable existant et actif/);
  const checked=new DatabaseSync(source,{readOnly:true});assert.equal(checked.prepare('SELECT COUNT(*) n FROM user_admins').get().n,0);checked.close();
 });

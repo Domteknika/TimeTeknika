@@ -17,9 +17,10 @@ RUN npm install --global pnpm@11.25.0 && pnpm install --prod --frozen-lockfile -
 COPY --chown=node:node server ./server
 COPY --chown=node:node public ./public
 COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node drizzle ./drizzle
 COPY --from=build --chown=node:node /app/dist/web ./dist/web
-RUN find /app/server /app/public /app/scripts /app/dist -type d -exec chmod 755 {} + \
-    && find /app/server /app/public /app/scripts /app/dist -type f -exec chmod 644 {} + \
+RUN find /app/server /app/public /app/scripts /app/drizzle /app/dist -type d -exec chmod 755 {} + \
+    && find /app/server /app/public /app/scripts /app/drizzle /app/dist -type f -exec chmod 644 {} + \
     && mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 4310

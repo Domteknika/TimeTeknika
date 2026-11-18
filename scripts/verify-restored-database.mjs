@@ -44,7 +44,7 @@ export async function verifyRestoredDatabase(source,{frontendDir=resolve('dist/w
     const restored=join(folder,'restored.sqlite');
     await backup(original,restored);
     original.close();original=null;
-    app=createApplication({dbPath:restored,frontendDir,initialAdminUsername});
+    app=await createApplication({dbPath:restored,frontendDir,initialAdminUsername});
     const newAdmins=app.store.all('SELECT user_id FROM user_admins ORDER BY user_id').map(row=>row.user_id);
     if(originalAdmins.length) {
       if(JSON.stringify(newAdmins)!==JSON.stringify(originalAdmins))throw Error('Administrateurs existants modifiés.');

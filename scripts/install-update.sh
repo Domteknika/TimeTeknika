@@ -42,9 +42,9 @@ trap rollback ERR
 python3 - "$archive" "$stage" "$expected_version" <<'PY'
 import sys, tarfile, re, json, hashlib, os
 archive, stage, version = sys.argv[1:]
-roots={'Dockerfile','.dockerignore','package.json','pnpm-lock.yaml','tsconfig.json','vite.config.ts','index.html','components.json'}
+roots={'Dockerfile','.dockerignore','package.json','pnpm-lock.yaml','tsconfig.json','tsconfig.db.json','drizzle.config.ts','vite.config.ts','index.html','components.json'}
 def valid(p):
-    return p in roots or (bool(re.fullmatch(r'(server|public|scripts|src|web-assets|dist/web)/[a-zA-Z0-9_./-]+',p)) and all(x and not x.startswith('.') for x in p.split('/')))
+    return p in roots or (bool(re.fullmatch(r'(server|public|scripts|src|web-assets|drizzle|dist/web)/[a-zA-Z0-9_./-]+',p)) and all(x and not x.startswith('.') for x in p.split('/')))
 with tarfile.open(archive,'r:gz') as tar:
     members=tar.getmembers()
     names=[m.name for m in members]
@@ -87,7 +87,7 @@ docker image tag "$old_image" "$old_tag"
 printf 'services:\n  teknika:\n    image: %s\n    environment:\n      INITIAL_ADMIN_USERNAME: "%s"\n' "$new_image" "$initial_admin" > "$state/new-image.yaml"
 printf 'services:\n  teknika:\n    image: %s\n' "$old_tag" > "$state/old-image.yaml"
 code_paths=()
-for path in Dockerfile .dockerignore package.json pnpm-lock.yaml tsconfig.json vite.config.ts index.html components.json server public scripts src web-assets dist; do
+for path in Dockerfile .dockerignore package.json pnpm-lock.yaml tsconfig.json tsconfig.db.json drizzle.config.ts vite.config.ts index.html components.json server public scripts src web-assets drizzle dist; do
   [[ ! -e "$root/$path" ]] || code_paths+=("$path")
 done
 tar -czf "$state/code-before.tar.gz" "${code_paths[@]}"
@@ -121,7 +121,7 @@ docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-
   "$new_image" node scripts/verify-restored-database.mjs /backup.sqlite "$initial_admin" > "$state/restore-check.json"
 owner=$(stat -c '%u:%g' "$root")
 switched=1
-for path in Dockerfile .dockerignore package.json pnpm-lock.yaml tsconfig.json vite.config.ts index.html components.json server public scripts src web-assets dist; do
+for path in Dockerfile .dockerignore package.json pnpm-lock.yaml tsconfig.json tsconfig.db.json drizzle.config.ts vite.config.ts index.html components.json server public scripts src web-assets drizzle dist; do
   cp -a "$stage/$path" "$root/"
   chown -R "$owner" "$root/$path"
 done

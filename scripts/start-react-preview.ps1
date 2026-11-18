@@ -41,6 +41,7 @@ if (-not (Test-Preview)) {
     $env:PORT = '4312'
     $env:DATA_DIR = $previewData
     $env:DEMO_MODE = '1'
+    $env:DEMO_DATABASE_URL = ''
     $env:FRONTEND_DIR = $previewBuild
     $env:APP_URL = $previewUrl
     $env:COOKIE_SECURE = '0'

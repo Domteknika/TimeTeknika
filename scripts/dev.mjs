@@ -55,7 +55,7 @@ if (!ready) {
   });
   console.log(
     demo
-      ? "Aperçu React : http://127.0.0.1:5173 — données fictives séparées dans .qa/react-demo"
-      : "React : http://127.0.0.1:5173 — base configurée par DATA_DIR",
+      ? `Aperçu React : http://127.0.0.1:5173 — ${env.DEMO_DATABASE_URL ? 'base PostgreSQL de démonstration' : 'données fictives séparées dans .qa/react-demo'}`
+      : `React : http://127.0.0.1:5173 — ${env.DATABASE_URL ? 'PostgreSQL' : 'base SQLite configurée par DATA_DIR'}`,
   );
 }

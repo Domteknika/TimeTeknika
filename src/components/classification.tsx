@@ -21,7 +21,7 @@ export function Classification({
 }: {
   taskId: string;
   projectId: string;
-  onChange: (task: string, project: string) => void;
+  onChange: (task: string, project: string, field: "task" | "project") => void;
   originalTaskId?: string | null;
   disabled?: boolean;
   showLabels?: boolean;
@@ -72,7 +72,7 @@ export function Classification({
         label="Projet"
         value={projectId}
         disabled={disabled}
-        onChange={(p) => onChange("", p)}
+        onChange={(p) => onChange("", p, "project")}
         options={[
           { value: "", label: "Sans projet" },
           ...projects.map((p) => ({
@@ -127,7 +127,7 @@ export function Classification({
               type="button"
               className="w-full rounded-md p-2 text-left text-sm hover:bg-muted"
               onClick={() => {
-                onChange("", projectId);
+                onChange("", projectId, "task");
                 setOpen(false);
               }}
             >
@@ -186,7 +186,7 @@ export function Classification({
                         key={t.id}
                         className="flex w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left text-sm hover:bg-muted"
                         onClick={() => {
-                          onChange(t.id, p.id);
+                          onChange(t.id, p.id, "task");
                           setOpen(false);
                         }}
                       >

@@ -4,7 +4,7 @@ import { createApplication } from '../server/index.mjs';
 import { passwordHash } from '../server/store.mjs';
 
 async function fixture(t) {
-  const app=createApplication({dbPath:':memory:',demo:true});
+  const app=await createApplication({dbPath:':memory:',demo:true});
   const password='test-passphrase-123';
   for(const user of app.store.all('SELECT id FROM users'))app.store.run('UPDATE users SET password=? WHERE id=?',passwordHash(password),user.id);
   await new Promise(r=>app.server.listen(0,'127.0.0.1',r));

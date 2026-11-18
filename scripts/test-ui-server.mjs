@@ -4,7 +4,7 @@ import { createApplication } from '../server/index.mjs';
 const qa = resolve('.qa');
 await mkdir(qa, { recursive:true });
 const fixture = await mkdtemp(join(qa,'react-browser-'));
-const app=createApplication({
+const app=await createApplication({
  dbPath:join(fixture,'demo.sqlite'),demo:true,
  frontendDir:resolve('dist/web'),publicOrigin:'http://127.0.0.1:4313'
 });
