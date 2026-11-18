@@ -1,0 +1,5 @@
+# Drizzle verifies migration hashes on every platform; keep these bytes stable.
+drizzle/*.sql text eol=lf
+drizzle/meta/*.json text eol=lf
+# Server installers and backups must remain executable by Linux Bash.
+scripts/*.sh text eol=lf
