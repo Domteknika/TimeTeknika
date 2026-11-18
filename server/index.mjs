@@ -16,9 +16,12 @@ import { previewCatalogDeletion, deleteCatalogItem } from './catalog-delete.mjs'
 import { PROJECT_COLORS } from '../public/project-colors.js';
 import { APP_VERSION } from '../public/release.js';
 import { requestContext } from './journal.mjs';
+import { changeHoliday, changeLeave, saveWorkSchedule, workTimeSnapshot } from './work-time.mjs';
 const diagnosticPaths = new Set(['/health', '/api/info', '/api/setup', '/api/login', '/api/demo-login', '/api/state', '/api/events', '/api/logout', '/api/reports', '/api/exports/preview', '/api/exports/download', '/api/export-templates', '/api/account/password', '/api/clients', '/api/projects', '/api/tasks', '/api/timer/start', '/api/timer/stop', '/api/entries', '/api/preferences', '/api/users', '/api/journal', '/api/journal/verify']);
 function diagnosticRoute(path) {
   if (diagnosticPaths.has(path)) return path;
+  if (['/api/work-schedule', '/api/leaves', '/api/holidays'].includes(path)) return path;
+  if (/^\/api\/(leaves|holidays)\/[^/]+$/.test(path)) return path.replace(/\/[^/]+$/, '/:id');
   const match = path.match(/^\/api\/(users|clients|projects|tasks|entries|export-templates)\/[^/]+(\/(?:history|restore|password|username|role|deletion-preview))?$/);
   return match ? `/api/${match[1]}/:id${match[2] ?? ''}` : '/unknown';
 }
@@ -314,6 +317,7 @@ export async function createApplication({
             '/': 'index.html',
             '/app.js': 'app.js',
             '/calendar-utils.js': 'calendar-utils.js',
+            '/work-schedule.js': 'work-schedule.js',
             '/report-charts.js': 'report-charts.js',
             '/rich-select.js': 'rich-select.js',
             '/task-projects.js': 'task-projects.js',
@@ -426,7 +430,10 @@ export async function createApplication({
           return json(res, 200, output);
         }
         if (path === '/api/state' && method === 'GET') return json(res, 200, {
-          ...(await readAuthorized(req, user, session, () => store.snapshot(user))),
+          ...(await readAuthorized(req, user, session, async () => ({
+            ...await store.snapshot(user),
+            workTime: await workTimeSnapshot(store, user.id)
+          }))),
           csrf: session.csrf,
           demo: demo && localRequest(req),
           access: ['manager', 'admin'].includes(user.role) ? {
@@ -582,6 +589,13 @@ export async function createApplication({
         if (method === 'GET') fail(404, 'Route inconnue.');
         const data = await body(req);
         const output = await mutate(req, user, data, async () => {
+          if (path === '/api/work-schedule' && method === 'POST') return saveWorkSchedule(store, user, data);
+          const calendarRoute = path.match(/^\/api\/(leaves|holidays)(?:\/([^/]+))?$/);
+          if (calendarRoute && (calendarRoute[2] ? ['PATCH', 'DELETE'].includes(method) : method === 'POST')) {
+            const [, collection, item] = calendarRoute;
+            const change = collection === 'leaves' ? changeLeave : changeHoliday;
+            return change(store, user, method, item, data);
+          }
           if (/^\/api\/(tasks|projects|clients)\/[^/]+$/.test(path) && method === "DELETE") {
             const [,, kind, id] = path.split('/');
             return await deleteCatalogItem(store, user, kind, id, data.confirmation);

@@ -4,8 +4,8 @@
 set -Eeuo pipefail
 umask 077
 root=/opt/timeteknika
-previous=2026.11.17-postgres-1
-version=2026.11.17-postgres-2
+previous=2026.11.17-postgres-2
+version=2026.11.18-postgres-3
 [[ $EUID == 0 && $# == 1 ]] || { echo 'Utiliser sudo bash scripts/install-ui-update.sh DOSSIER_LIVRAISON.' >&2; exit 1; }
 # sudo has already authenticated through its controlling terminal. Docker's
 # interactive stdin must not retain that terminal while output is redirected.

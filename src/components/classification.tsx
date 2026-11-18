@@ -1,5 +1,5 @@
 import { useState, useMemo, useId } from "react";
-import { Check, ChevronsUpDown, ChevronDown, Pin, Search } from "lucide-react";
+import { Check, ChevronsUpDown, ChevronDown, Pin, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspace } from "@/lib/app-context";
 import { normalize } from "@/lib/time";
@@ -15,6 +15,7 @@ export function Classification({
   taskId,
   projectId,
   onChange,
+  onCreateTask,
   originalTaskId,
   disabled = false,
   showLabels = false,
@@ -22,6 +23,7 @@ export function Classification({
   taskId: string;
   projectId: string;
   onChange: (task: string, project: string, field: "task" | "project") => void;
+  onCreateTask?: () => void;
   originalTaskId?: string | null;
   disabled?: boolean;
   showLabels?: boolean;
@@ -198,6 +200,22 @@ export function Classification({
               );
             })}
           </div>
+          {onCreateTask && (
+            <div className="border-t pt-1">
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full justify-start text-primary"
+                onClick={() => {
+                  setOpen(false);
+                  onCreateTask();
+                }}
+              >
+                <Plus />
+                Créer une tâche
+              </Button>
+            </div>
+          )}
         </PopoverContent>
       </Popover>
       </div>

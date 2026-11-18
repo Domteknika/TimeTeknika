@@ -1,3 +1,11 @@
+import type { Holiday, Leave, WorkSchedule } from "../../public/work-schedule.js";
+
+export interface WorkTime {
+  schedules: WorkSchedule[];
+  leaves: Leave[];
+  holidays: Holiday[];
+}
+
 export interface Preferences {
   page?: string;
   timerView?: "list" | "calendar";
@@ -89,6 +97,7 @@ export interface Snapshot {
   revision: number;
   demo: boolean;
   timezone: string;
+  workTime?: WorkTime;
   exportTemplates: {
     id: string;
     name: string;

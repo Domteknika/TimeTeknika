@@ -88,7 +88,7 @@ test('Audit migration : conservation vérifiée après démarrage, sans écritur
   const before = await databaseHash(f.store), original = sha(await readFile(f.sourcePath));
   const initial = await f.audit();
   assert.equal(initial.ok, true);
-  assert.equal(initial.tablesComparedAtImport, 13);
+  assert.equal(initial.tablesComparedAtImport, IMPORT_TABLES.length);
   assert.equal(initial.current.preservation.users.missing, 0);
   assert.equal(initial.current.preservation.entries.changedSinceImport, 0);
   assert.equal(initial.current.preservation.audit.changedSinceImport, 0);

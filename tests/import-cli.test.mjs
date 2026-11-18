@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, writeFile, rm, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path';
 import { openStore, seedDemo } from '../server/store.mjs';
 import { parseImportArguments, importErrorDiagnostic } from '../scripts/import-sqlite.mjs';
+import { IMPORT_TABLES } from '../server/db/sqlite-import-source.mjs';
 
 const privateMarker = 'fixture-private-material-should-not-appear';
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -72,7 +73,7 @@ test('Import CLI : aide et validation SQLite sans PostgreSQL, avec sortie sans d
   const report = JSON.parse(result.stdout);
   assert.equal(report.status, 'source-validated');
   assert.equal(report.tables.users.count, 3);
-  assert.equal(Object.keys(report.tables).length, 13);
+  assert.equal(Object.keys(report.tables).length, IMPORT_TABLES.length);
   assert.deepEqual(report.checkpoint, source.checkpoint);
   assert.match(report.fingerprint, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(result.stdout + result.stderr, new RegExp(privateMarker));

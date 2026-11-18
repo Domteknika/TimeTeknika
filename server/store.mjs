@@ -33,6 +33,20 @@ export function openStore(path) {
     CREATE TABLE IF NOT EXISTS requests (user_id TEXT NOT NULL REFERENCES users(id), key TEXT NOT NULL, fingerprint TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(user_id,key));
     CREATE TABLE IF NOT EXISTS export_templates (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, config TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS user_admins (user_id TEXT PRIMARY KEY REFERENCES users(id));
+    CREATE TABLE IF NOT EXISTS work_schedules (
+      user_id TEXT NOT NULL REFERENCES users(id), start_date TEXT NOT NULL,
+      schedule TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(user_id,start_date)
+    );
+    CREATE TABLE IF NOT EXISTS leaves (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), start_date TEXT NOT NULL, end_date TEXT NOT NULL,
+      start_part TEXT NOT NULL CHECK(start_part IN ('full','am','pm')), end_part TEXT NOT NULL CHECK(end_part IN ('full','am')),
+      exclusions TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, CHECK(end_date >= start_date)
+    );
+    CREATE INDEX IF NOT EXISTS leaves_user_period ON leaves(user_id,start_date,end_date);
+    CREATE TABLE IF NOT EXISTS holidays (
+      id TEXT PRIMARY KEY, date TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('holiday','closure')), version INTEGER NOT NULL DEFAULT 1
+    );
     PRAGMA user_version=1;`);
   if (db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'email')) {
     db.exec('ALTER TABLE users RENAME COLUMN email TO username');

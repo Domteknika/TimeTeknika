@@ -19,7 +19,7 @@ async function fixture(t, demo = true) {
   const pg = new PGlite(), orm = drizzle(pg);
   let app, disposed = 0;
   t.after(async () => { try { await app?.close(); } finally { await pg.close(); } });
-  assert.equal((await migrateDatabase({ drizzle: orm })).applied, 2);
+  assert.equal((await migrateDatabase({ drizzle: orm })).applied, 3);
   const store = await openPostgresStore({ drizzle: orm, close: async () => { disposed++; } });
   app = await createApplication({ store, demo });
   await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(0, '127.0.0.1', resolve); });

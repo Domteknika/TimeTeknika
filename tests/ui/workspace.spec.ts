@@ -1,15 +1,105 @@
 import { test, expect } from "@playwright/test";
+import { dayKey, prettyDay, shiftDay } from "../../src/lib/time";
+
+test("L’objectif hebdomadaire accepte 32.8 heures", async ({ page }) => {
+  await page.goto("/#settings");
+  await page.getByRole("button", { name: /Alex Martin/ }).click();
+  const target = page.getByLabel("Objectif hebdomadaire (heures)", { exact: true });
+  await target.fill("32.8");
+  await page.getByRole("button", { name: "Enregistrer", exact: true }).click();
+  await expect(page.getByText("Préférences enregistrées.", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(target).toHaveValue("32.8");
+  await page.getByRole("button", { name: "Mon temps", exact: true }).click();
+  await expect(page.getByLabel("Résumé de mon temps")).toContainText("/ 32:48");
+});
+
+test("Le menu du chrono permet de créer et sélectionner une tâche", async ({ page }) => {
+  await page.goto("/#timer");
+  await page.getByRole("button", { name: /Emma Laurent/ }).click();
+  const description = page.getByRole("textbox", { name: "Description du chrono" });
+  await description.fill("Activité en cours");
+  await page.getByRole("button", { name: "Démarrer", exact: true }).click();
+  const stop = page.getByRole("button", { name: "Arrêter le chrono", exact: true });
+  await expect(stop).toBeVisible();
+  const snapshot = async () => (await page.request.get("/api/state")).json();
+  const before = await snapshot();
+  const running = before.entries.find((entry: { end: number | null }) => entry.end === null);
+  const project = before.projects.find((item: { archived: boolean }) => !item.archived);
+  const taskName = "Tâche créée depuis le chrono";
+  await description.fill("Activité suivante");
+  const projectChoice = page.getByRole("combobox", { name: "Projet", exact: true });
+  await projectChoice.click();
+  await page.getByRole("option", { name: project.name }).click();
+  const task = page.getByRole("combobox", { name: "Tâche", exact: true });
+  await task.click();
+  await page.getByRole("button", { name: "Créer une tâche", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Créer une tâche", exact: true });
+  await expect(editor.getByRole("combobox", { name: "Projet de la tâche" })).toContainText(project.name);
+  await editor.getByLabel("Nom", { exact: true }).fill(taskName);
+  await editor.getByRole("button", { name: "Enregistrer", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(task).toContainText(taskName);
+  await expect(description).toHaveValue("Activité suivante");
+  const after = await snapshot();
+  expect(after.entries.find((entry: { id: string }) => entry.id === running.id)).toEqual(running);
+  const created = after.tasks.find((item: { name: string }) => item.name === taskName);
+  expect(created).toMatchObject({ project_id: project.id, assignees: [after.me.id] });
+  await page.getByRole("button", { name: "Basculer sur cette activité", exact: true }).click();
+  await expect.poll(async () => (await snapshot()).entries.find((entry: { end: number | null }) => entry.end === null)?.task_id).toBe(created.id);
+  await stop.click();
+  await expect(stop).toHaveCount(0);
+});
+
+test.describe("Calendrier mobile", () => {
+  test.use({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true });
+
+  test("Affiche aujourd’hui, puis permet de naviguer jour par jour", async ({ page }, testInfo) => {
+    await page.goto("/#timer");
+    await page.getByRole("button", { name: /Alex Martin/ }).tap();
+    await page.getByRole("button", { name: "Calendrier", exact: true }).tap();
+    const { serverNow } = await (await page.request.get("/api/state")).json();
+    const today = dayKey(serverNow);
+    const previous = page.getByRole("button", { name: "Jour précédent", exact: true });
+    const next = page.getByRole("button", { name: "Jour suivant", exact: true });
+    const day = page.locator(".calendar-day");
+    await expect(day).toHaveCount(1);
+    await expect(day).toHaveClass(/\btoday\b/);
+    await expect(page.getByText(prettyDay(today), { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Jours affichés")).toHaveCount(0);
+    expect(await page.locator(".calendar-scroll").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.locator(".calendar-grid").screenshot({ path: testInfo.outputPath("calendrier-mobile.png") });
+    await previous.tap();
+    await expect(page.getByText(prettyDay(shiftDay(today, -1)), { exact: true })).toBeVisible();
+    await next.tap();
+    await expect(day).toHaveClass(/\btoday\b/);
+    await next.tap();
+    const tomorrow = shiftDay(today, 1);
+    await expect(page.getByText(prettyDay(tomorrow), { exact: true })).toBeVisible();
+    await day.tap({ position: { x: 16, y: 80 } });
+    const editor = page.getByRole("dialog", { name: "Ajouter du temps", exact: true });
+    await expect(editor.getByLabel("Date de début", { exact: true })).toHaveValue(tomorrow);
+    await editor.getByRole("button", { name: "Annuler", exact: true }).tap();
+    await page.getByRole("button", { name: "Aujourd’hui", exact: true }).tap();
+    await expect(day).toHaveClass(/\btoday\b/);
+    await page.setViewportSize({ width: 800, height: 360 });
+    await expect(day).toHaveCount(1);
+    await expect(previous).toBeVisible();
+  });
+});
+
 test("React workspace: timer, catalog, exports, calendar, mobile and permissions", async ({
   page,
   browser,
 }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/");
+  await page.goto("/#timer");
   await page.getByRole("button", { name: /Alex Martin/ }).click();
   await expect(
     page.getByRole("heading", { name: "Votre temps, en perspective." }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Liste", exact: true }).click();
   const existingStop = page.getByRole("button", {
     name: "Arrêter le chrono",
     exact: true,

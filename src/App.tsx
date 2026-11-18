@@ -31,15 +31,16 @@ import { duration, elapsed, dayKey, clockTime } from "@/lib/time";
 import { LoginPage } from "@/pages/login-page";
 import { TimePage } from "@/pages/time-page";
 import { CatalogPage } from "@/pages/catalog-page";
-import { SettingsPage } from "@/pages/settings-page";
 import { EntryEditor } from "@/components/editors";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Entry } from "@/lib/types";
 const loadReports = () => import("@/pages/reports-page").then(m => ({ default: m.ReportsPage }));
 const loadExports = () => import("@/pages/exports-page").then(m => ({ default: m.ExportsPage }));
+const loadSettings = () => import("@/pages/settings-page").then(m => ({ default: m.SettingsPage }));
 const ReportsPage = lazy(loadReports);
 const ExportsPage = lazy(loadExports);
+const SettingsPage = lazy(loadSettings);
 function preloadPage(page: string) {
   if (page === "reports") void loadReports().catch(() => {});
   if (page === "exports") void loadExports().catch(() => {});

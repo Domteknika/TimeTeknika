@@ -89,8 +89,8 @@ test('Démarrage PostgreSQL : migrations, protections et historique vérifiés s
   let closed = 0;
   await assert.rejects(openPostgresDatabase({ drizzle: orm, close: async () => { closed++; } }), /Schéma PostgreSQL incomplet/);
   assert.equal(closed, 1);
-  assert.deepEqual(await migrateDatabase({ drizzle: orm }), { applied: 2, total: 2 });
-  assert.deepEqual(await migrateDatabase({ drizzle: orm }), { applied: 0, total: 2 });
+  assert.deepEqual(await migrateDatabase({ drizzle: orm }), { applied: 3, total: 3 });
+  assert.deepEqual(await migrateDatabase({ drizzle: orm }), { applied: 0, total: 3 });
 
   const originalHash = (await pg.query('SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at LIMIT 1')).rows[0].hash;
   await pg.query("UPDATE drizzle.__drizzle_migrations SET hash='changed' WHERE id=1");

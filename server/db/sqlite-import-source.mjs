@@ -25,7 +25,11 @@ export const IMPORT_TABLES = Object.freeze([
   descriptor('requests', 'user_id,key,fingerprint,result,at', 'user_id,key', ['at'], [], ['result']),
   descriptor('export_templates', 'id,user_id,name,config,version,created_at,updated_at', 'id', ['version', 'created_at', 'updated_at'], [], ['config']),
   descriptor('event_log', 'seq,at,level,category,action,actor,entity,entity_id,request_id,details_json,previous_hash,hash', 'seq', ['seq', 'at'], [], [], ['actor', 'entity', 'entity_id', 'request_id']),
+  descriptor('work_schedules', 'user_id,start_date,schedule,version', 'user_id,start_date', ['version'], [], ['schedule']),
+  descriptor('leaves', 'id,user_id,start_date,end_date,start_part,end_part,exclusions,version', 'id', ['version'], [], ['exclusions']),
+  descriptor('holidays', 'id,date,name,kind,version', 'id', ['version']),
 ]);
+const calendarTables = new Set(['work_schedules', 'leaves', 'holidays']);
 const byName = new Map(IMPORT_TABLES.map(table => [table.name, table]));
 const tableOf = table => {
   const descriptor = byName.get(typeof table === 'string' ? table : table?.name);
@@ -129,13 +133,16 @@ const references = [
   ['tasks', 'created_by', 'users'], ['assignments', 'task_id', 'tasks'], ['assignments', 'user_id', 'users'],
   ['entries', 'user_id', 'users'], ['entries', 'task_id', 'tasks'], ['entries', 'project_id', 'projects'],
   ['audit', 'actor', 'users'], ['audit', 'owner', 'users'], ['requests', 'user_id', 'users'], ['export_templates', 'user_id', 'users'],
+  ['work_schedules', 'user_id', 'users'], ['leaves', 'user_id', 'users'],
 ];
 
 function validateSchema(db) {
   const actual = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name").all().map(row => row.name);
-  if (JSON.stringify(actual) !== JSON.stringify(IMPORT_TABLES.map(table => table.name).sort()))
-    throw new Error('Source SQLite incompatible : les 13 tables de la version actuelle sont requises, sans table supplémentaire.');
-  for (const table of IMPORT_TABLES) {
+  const legacy = !actual.some(table => calendarTables.has(table));
+  const tables = IMPORT_TABLES.filter(table => !legacy || !calendarTables.has(table.name));
+  if (JSON.stringify(actual) !== JSON.stringify(tables.map(table => table.name).sort()))
+    throw new Error('Source SQLite incompatible : tables manquantes ou supplémentaires.');
+  for (const table of tables) {
     const columns = db.prepare(`PRAGMA table_info("${table.name}")`).all();
     if (columns.length !== table.columns.length || columns.some(column => !table.columns.includes(column.name)))
       throw new Error(`Source SQLite incompatible : colonnes inattendues dans ${table.name}.`);
@@ -146,6 +153,7 @@ function validateSchema(db) {
   if (db.prepare('PRAGMA foreign_key_check').get()) throw new Error('Références SQLite invalides.');
   // Check actual relationships as well, even if a source constraint was removed.
   for (const [table, column, target] of references) {
+    if (legacy && calendarTables.has(table)) continue;
     if (db.prepare(`SELECT 1 FROM "${table}" child LEFT JOIN "${target}" parent ON child."${column}"=parent.id WHERE child."${column}" IS NOT NULL AND parent.id IS NULL LIMIT 1`).get())
       throw invalid(table, column, 'référence absente');
   }
@@ -153,6 +161,7 @@ function validateSchema(db) {
     if (db.prepare(`SELECT 1 FROM "${table}" GROUP BY ${columns} HAVING COUNT(*)>1 LIMIT 1`).get()) throw new Error(`Source SQLite incompatible : doublon dans ${table}.`);
   }
   if (db.prepare('SELECT 1 FROM entries WHERE "end" IS NULL AND deleted=0 GROUP BY user_id HAVING COUNT(*)>1 LIMIT 1').get()) throw new Error('Source SQLite incompatible : plusieurs chronos actifs pour une personne.');
+  return new Set(actual);
 }
 
 function validateCheckpoint(checkpoint) {
@@ -176,10 +185,11 @@ export async function openSqliteImportSource(sourcePath, { checkpoint = null } =
     await backup(original, join(directory, 'snapshot.sqlite'));
     original.close(); original = null;
     db = new DatabaseSync(join(directory, 'snapshot.sqlite'), { readOnly: true });
-    validateSchema(db);
+    const present = validateSchema(db);
     function* rows(name) {
       if (closed) throw new Error('La copie SQLite est fermée.');
       const table = tableOf(name);
+      if (!present.has(table.name)) return;
       const order = table.keys.map(column => `"${column}"${table.integers.includes(column) ? '' : ' COLLATE BINARY'}`).join(',');
       const statement = db.prepare(`SELECT ${table.columns.map(column => `"${column}"`).join(',')} FROM "${table.name}" ORDER BY ${order}`);
       statement.setReadBigInts(true);

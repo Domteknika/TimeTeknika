@@ -18,6 +18,7 @@ import type { Person } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { HolidaySettings, WorkScheduleSettings } from "@/components/work-time";
 import {
   Table,
   TableHeader,
@@ -57,6 +58,7 @@ export function SettingsPage() {
     [rolePerson, setRolePerson] = useState<Person | null>(null),
     [journal, setJournal] = useState(false);
   const pref = state.me.preferences;
+  const hasWorkSchedule = Boolean(state.workTime?.schedules.length);
   return (
     <>
       <PageHeading
@@ -68,33 +70,33 @@ export function SettingsPage() {
           <h2 className="text-lg font-semibold">Mon temps de travail</h2>
           <AsyncForm
             onSubmit={async (f) => {
-              const target = String(f.get("weekly"));
+              const target = f.get("weekly");
               await preference({
-                weeklyTargetMinutes:
-                  target === "" ? null : Math.round(Number(target) * 60),
+                ...(target === null ? {} : { weeklyTargetMinutes: target === "" ? null : Math.round(Number(target) * 60) }),
                 balanceStartDate: String(f.get("balance")),
                 reminderHour: Number(f.get("reminder")),
               });
               toast.success("Préférences enregistrées.");
             }}
           >
-            <Field
+            {!hasWorkSchedule && <Field
               label="Objectif hebdomadaire (heures)"
-              hint="L’objectif actuel s’applique à toute la période de suivi. Laisser vide pour désactiver."
+              hint="Objectif utilisé avant le premier horaire enregistré. Laisser vide pour désactiver."
             >
               <Input
                 name="weekly"
                 type="number"
+                inputMode="decimal"
                 min="0"
                 max="168"
-                step="0.25"
+                step="any"
                 defaultValue={
                   pref.weeklyTargetMinutes == null
                     ? ""
                     : pref.weeklyTargetMinutes / 60
                 }
               />
-            </Field>
+            </Field>}
             <Field
               label="Premier lundi du suivi"
               hint="Le solde inclut l’objectif complet de la semaine en cours."
@@ -117,6 +119,7 @@ export function SettingsPage() {
               />
             </Field>
           </AsyncForm>
+          <WorkScheduleSettings />
         </Card>
         <Card className="p-6">
           <h2 className="text-lg font-semibold">Sécurité du compte</h2>
@@ -166,6 +169,7 @@ export function SettingsPage() {
           </AsyncForm>
         </Card>
       </div>
+      <HolidaySettings />
       {canViewTeam(state.me.role) && (
         <>
           <Card className="gap-0 overflow-hidden py-0">

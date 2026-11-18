@@ -52,7 +52,9 @@ export function CatalogEditor({
   const [assignees, setAssignees] = useState(task?.assignees ?? [state.me.id]);
   return (
     <Modal
-      title={(item ? "Modifier le " : "Créer un ") + names[kind]}
+      title={kind === "tasks"
+        ? (item ? "Modifier la tâche" : "Créer une tâche")
+        : (item ? "Modifier le " : "Créer un ") + names[kind]}
       onClose={onClose}
     >
       <AsyncForm

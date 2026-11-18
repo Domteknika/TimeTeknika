@@ -34,6 +34,41 @@ export const userAdmins = pgTable('user_admins', {
   user_id: text('user_id').primaryKey().references(() => users.id, { onDelete: 'no action' }),
 });
 
+export const workSchedules = pgTable('work_schedules', {
+  user_id: text('user_id').notNull().references(() => users.id),
+  start_date: text('start_date').notNull(),
+  schedule: jsonb('schedule').$type<{ days: [number, number][] }>().notNull(),
+  version: integer('version').notNull().default(1),
+}, table => [
+  primaryKey({ columns: [table.user_id, table.start_date] }),
+]);
+
+export const leaves = pgTable('leaves', {
+  id: text('id').primaryKey(),
+  user_id: text('user_id').notNull().references(() => users.id),
+  start_date: text('start_date').notNull(),
+  end_date: text('end_date').notNull(),
+  start_part: text('start_part', { enum: ['full', 'am', 'pm'] }).notNull(),
+  end_part: text('end_part', { enum: ['full', 'am'] }).notNull(),
+  exclusions: jsonb('exclusions').$type<{ dates: string[] }>().notNull(),
+  version: integer('version').notNull().default(1),
+}, table => [
+  check('leaves_period_check', sql`${table.end_date} >= ${table.start_date}`),
+  check('leaves_start_part_check', sql`${table.start_part} IN ('full', 'am', 'pm')`),
+  check('leaves_end_part_check', sql`${table.end_part} IN ('full', 'am')`),
+  index('leaves_user_period').on(table.user_id, table.start_date, table.end_date),
+]);
+
+export const holidays = pgTable('holidays', {
+  id: text('id').primaryKey(),
+  date: text('date').notNull().unique(),
+  name: text('name').notNull(),
+  kind: text('kind', { enum: ['holiday', 'closure'] }).notNull(),
+  version: integer('version').notNull().default(1),
+}, table => [
+  check('holidays_kind_check', sql`${table.kind} IN ('holiday', 'closure')`),
+]);
+
 export const sessions = pgTable('sessions', {
   token: text('token').primaryKey(), // SHA-256 digest of the session cookie.
   user_id: text('user_id').notNull().references(() => users.id, { onDelete: 'no action' }),

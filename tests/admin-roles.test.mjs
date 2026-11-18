@@ -84,7 +84,7 @@ test('Migration additive : seul le compte explicitement désigné devient admin 
  await original.close();
  const old=new DatabaseSync(source);old.exec('DROP TABLE user_admins');old.close();
  const result=await verifyRestoredDatabase(source,{initialAdminUsername:'alex@demo.local'});
- assert.equal(result.ok,true);assert.equal(result.unchangedTables,11);
+ assert.equal(result.ok,true);assert.equal(result.unchangedTables,14);
  const untouched=new DatabaseSync(source,{readOnly:true});assert.equal(untouched.prepare("SELECT 1 FROM sqlite_master WHERE name='user_admins'").get(),undefined);untouched.close();
  const migrated=await createApplication({dbPath:source,initialAdminUsername:'alex@demo.local'});
  assert.deepEqual(migrated.store.all('SELECT * FROM users ORDER BY id'),beforeUsers);

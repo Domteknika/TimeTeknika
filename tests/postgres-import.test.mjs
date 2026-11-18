@@ -12,9 +12,10 @@ import { createPostgresJournal } from '../server/db/journal.mjs';
 import { importSqliteToPostgres } from '../server/db/import-sqlite.mjs';
 import { openPostgresStore } from '../server/async-store.mjs';
 import { createApplication } from '../server/index.mjs';
+import { IMPORT_TABLES } from '../server/db/sqlite-import-source.mjs';
 
-const tableNames = ['meta', 'users', 'user_admins', 'sessions', 'clients', 'projects', 'tasks', 'assignments', 'entries', 'audit', 'requests', 'export_templates', 'event_log'];
-const jsonColumns = { users: ['preferences'], requests: ['result'], export_templates: ['config'] };
+const tableNames = IMPORT_TABLES.map(table => table.name);
+const jsonColumns = Object.fromEntries(IMPORT_TABLES.map(table => [table.name, table.json]));
 const at = Date.parse('2026-02-10T08:00:00.123Z');
 const password = 'Import-fixture-2026!';
 const retainedCookie = 'imported-session-cookie';
@@ -46,6 +47,11 @@ async function sourceFixture(t) {
     source.run('INSERT INTO sessions(token,user_id,csrf,expires) VALUES (?,?,?,?)', sha('expired-cookie'), 'demo-lucas', 'expired-csrf', at);
     source.run('INSERT INTO requests(user_id,key,fingerprint,result,at) VALUES (?,?,?,?,?)', 'demo-emma', 'old-request-key', sha('original request'), '{ "revision": 17, "entry": {"id":"entry-kept", "start": 1770710400123} }', at);
     source.run('INSERT INTO export_templates(id,user_id,name,config,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?)', 'template-kept', 'demo-emma', 'Relevé façade', '{ "version":1, "document":{"title":"Étude façade"}, "columns":[{"key":"description","label":"Libellé"}], "total":true }', 3, at, at + 10);
+    source.run('INSERT INTO work_schedules(user_id,start_date,schedule,version) VALUES (?,?,?,?)',
+      'demo-emma', '2026-12-21', '{"days":[[240,240],[240,240],[240,240],[240,240],[0,0],[0,0],[0,0]]}', 2);
+    source.run('INSERT INTO leaves(id,user_id,start_date,end_date,start_part,end_part,exclusions,version) VALUES (?,?,?,?,?,?,?,?)',
+      'leave-kept', 'demo-emma', '2026-12-24', '2026-12-28', 'pm', 'am', '{"dates":["2026-12-25","2026-12-26","2026-12-27"]}', 3);
+    source.run('INSERT INTO holidays(id,date,name,kind,version) VALUES (?,?,?,?,?)', 'holiday-kept', '2026-12-25', 'Noël', 'holiday', 2);
     for (const [eid, uid, end, deleted, description, taskId, projectId] of [
       ['entry-running', 'demo-emma', null, 0, 'Chrono conservé ⏱', 'task-plans', 'project-cedres'],
       ['entry-zero', 'demo-alex', at, 0, 'Durée nulle', null, null],
@@ -82,7 +88,7 @@ async function assertEmpty(store) {
   for (const table of tableNames) assert.equal((await store.one(`SELECT count(*) n FROM "${table}"`)).n, 0, `${table} should remain empty`);
 }
 
-test('Import PostgreSQL : les 13 tables, mots de passe, temps et empreintes sont conservés', async t => {
+test('Import PostgreSQL : les tables, mots de passe, temps et empreintes sont conservés', async t => {
   const source = await sourceFixture(t), target = await targetFixture(t);
   const sourceBytes = sha(await readFile(source.sourcePath));
   let imported;
@@ -99,7 +105,7 @@ test('Import PostgreSQL : les 13 tables, mots de passe, temps et empreintes sont
     imported = await importSqliteToPostgres({ sourcePath: source.sourcePath, store: target.store, checkpoint: source.checkpoint });
     assert.equal(imported.status, 'imported');
     assert.match(imported.fingerprint, /^[a-f0-9]{64}$/);
-    assert.equal(Object.keys(imported.tables).length, 13);
+    assert.equal(Object.keys(imported.tables).length, IMPORT_TABLES.length);
     for (const table of tableNames) {
       const actual = await target.store.all(`SELECT * FROM "${table}"`);
       assert.deepEqual(comparable(table, actual), comparable(table, source.expected[table]), table);
@@ -190,7 +196,7 @@ test('Import PostgreSQL : cible occupée refusée et échec intermédiaire enti�
     assert.deepEqual(await store.all('SELECT * FROM meta'), [{ key: 'existing', value: 42 }]);
     await store.run('DELETE FROM meta WHERE key=?', 'existing');
   });
-  await t.test('une erreur après les premières insertions laisse les 13 tables vides', async () => {
+  await t.test('une erreur après les premières insertions laisse toutes les tables vides', async () => {
     await pg.exec(`CREATE FUNCTION public.reject_import_audit() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN RAISE EXCEPTION 'simulated audit import failure'; END; $$;
       CREATE TRIGGER reject_import_audit BEFORE INSERT ON public.audit

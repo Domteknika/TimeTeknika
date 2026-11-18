@@ -35,7 +35,7 @@ test('Restauration React : préserve la sauvegarde, les tables métier et teste 
   const store=openStore(dbPath);seedDemo(store);store.db.close();
   const before=hash(await readFile(dbPath));
   const result=await verifyRestoredDatabase(dbPath);
-  assert.equal(result.ok,true);assert.equal(result.users,3);assert.equal(result.unchangedTables,11);
+  assert.equal(result.ok,true);assert.equal(result.users,3);assert.equal(result.unchangedTables,14);
   assert.deepEqual(result.exports,['csv','xlsx','pdf']);
   assert.equal(hash(await readFile(dbPath)),before);
 });

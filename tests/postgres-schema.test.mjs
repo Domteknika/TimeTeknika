@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
-import { eq } from 'drizzle-orm';
+import { eq, getTableName } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import * as schema from '../server/db/schema.ts';
@@ -38,13 +38,13 @@ test('PostgreSQL : migrations, types et invariants du schéma Drizzle', async t 
   const db = drizzle(pg);
   await migrate(db, { migrationsFolder });
 
-  await t.test('les deux migrations s’appliquent puis restent sans effet au second passage', async () => {
-    const expected = ['assignments', 'audit', 'clients', 'entries', 'event_log', 'export_templates', 'meta', 'projects', 'requests', 'sessions', 'tasks', 'user_admins', 'users'];
+  await t.test('les migrations s’appliquent puis restent sans effet au second passage', async () => {
+    const expected = Object.values(schema).map(getTableName).sort();
     const tables = await pg.query("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename");
     assert.deepEqual(tables.rows.map(row => row.tablename), expected);
     await migrate(db, { migrationsFolder });
     const applied = await pg.query('SELECT count(*)::integer AS count FROM drizzle.__drizzle_migrations');
-    assert.equal(applied.rows[0].count, 2);
+    assert.equal(applied.rows[0].count, 3);
   });
 
   const preferences = { weeklyTargetMinutes: 2400, taskProjects: { 'project-a': { pinned: true } }, calendarFit: false };

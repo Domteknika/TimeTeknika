@@ -12,10 +12,12 @@ import { csvExport, xlsxExport, pdfExport } from '../server/export-files.mjs';
 import { defaultExportConfig } from '../public/export-config.js';
 
 const tables=['meta','users','clients','projects','tasks','assignments','entries','audit','export_templates','requests','sessions'];
+const calendarTables=['work_schedules','leaves','holidays'];
 function fingerprint(db){
   const rows={};
-  for(const table of tables){
-    const data=db.prepare('SELECT * FROM '+table).all().map(row=>JSON.stringify(row)).sort();
+  const present=new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row=>row.name));
+  for(const table of [...tables,...calendarTables]){
+    const data=calendarTables.includes(table)&&!present.has(table)?[]:db.prepare('SELECT * FROM '+table).all().map(row=>JSON.stringify(row)).sort();
     rows[table]={count:data.length,sha256:createHash('sha256').update(JSON.stringify(data)).digest('hex')};
   }
   return rows;
@@ -76,7 +78,7 @@ export async function verifyRestoredDatabase(source,{frontendDir=resolve('dist/w
     original=new DatabaseSync(input,{readOnly:true});
     if(createHash("sha256").update(await readFile(resolve(source))).digest("hex")!==sourceHash)throw Error("La sauvegarde source a changé.");
     if(JSON.stringify(fingerprint(original))!==JSON.stringify(before))throw Error('La sauvegarde source a changé.');
-    return {ok:true,users:users.length,entries:before.entries.count,unchangedTables:tables.length,exports:['csv','xlsx','pdf']};
+    return {ok:true,users:users.length,entries:before.entries.count,unchangedTables:Object.keys(before).length,exports:['csv','xlsx','pdf']};
   }finally{
     if(original)original.close();
     if(app)await app.close();

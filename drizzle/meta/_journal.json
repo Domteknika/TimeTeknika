@@ -15,6 +15,13 @@
       "when": 1794915908379,
       "tag": "0001_journal_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795017061572,
+      "tag": "0002_work_schedules_and_leave",
+      "breakpoints": true
     }
   ]
 }

@@ -3,11 +3,11 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { drizzle as nodePostgres } from 'drizzle-orm/node-postgres';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
-import { sql } from 'drizzle-orm';
+import { getTableName, sql } from 'drizzle-orm';
 import * as schema from './schema.ts';
 
 export const migrationsFolder = fileURLToPath(new URL('../../drizzle/', import.meta.url));
-const tables = ['assignments', 'audit', 'clients', 'entries', 'event_log', 'export_templates', 'meta', 'projects', 'requests', 'sessions', 'tasks', 'user_admins', 'users'];
+const tables = Object.values(schema).map(getTableName);
 const applicationLock = sql`select pg_advisory_xact_lock(1414808906, 1)`;
 
 // SQL stays portable at its call site. Only placeholders become Drizzle-bound

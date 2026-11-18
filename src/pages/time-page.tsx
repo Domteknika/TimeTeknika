@@ -1,5 +1,5 @@
 import { LiveDuration } from "@/components/live-duration";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useSyncExternalStore } from "react";
 import {
   Plus,
   Play,
@@ -8,6 +8,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Pencil,
   History,
   Trash2,
@@ -16,6 +17,9 @@ import {
 import { toast } from "sonner";
 import { useWorkspace, useNow } from "@/lib/app-context";
 import type { Entry } from "@/lib/types";
+import { emptyWorkTime, workMinutesLabel } from "@/lib/work-time";
+import { weekday, workCalendar, type Leave } from "../../public/work-schedule.js";
+import { LeaveEditor, WorkDayMarks } from "@/components/work-time";
 import {
   dayKey,
   prettyDay,
@@ -39,6 +43,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Classification } from "@/components/classification";
 import {
   PageHeading,
@@ -47,7 +52,17 @@ import {
   ErrorMessage,
   NativeSelect,
 } from "@/components/shared";
-import { EntryEditor, EntryHistory, deleteEntry } from "@/components/editors";
+import { CatalogEditor, EntryEditor, EntryHistory, deleteEntry } from "@/components/editors";
+
+const mobileViewport = window.matchMedia(
+  "(max-width: 767px), (max-height: 767px) and (pointer: coarse)",
+);
+function subscribeToMobileViewport(onChange: () => void) {
+  mobileViewport.addEventListener("change", onChange);
+  return () => mobileViewport.removeEventListener("change", onChange);
+}
+const isMobileViewport = () => mobileViewport.matches;
+
 export function EntryList({
   entries,
   onEdit,
@@ -172,11 +187,15 @@ export function EntryList({
 export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
   const { state, mutate, preference } = useWorkspace();
   const now = useNow();
+  const mobile = useSyncExternalStore(subscribeToMobileViewport, isMobileViewport);
   const [view, setView] = useState(state.me.preferences.timerView ?? "list"),
     [offset, setOffset] = useState(0);
+  const [calendarDay, setCalendarDay] = useState<string | null>(null);
   const [description, setDescription] = useState(""),
     [task, setTask] = useState(""),
     [project, setProject] = useState("");
+  const [createTask, setCreateTask] = useState(false);
+  const [leaveEdit, setLeaveEdit] = useState<{ date: string; entry?: Leave } | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [edit, setEdit] = useState<{
@@ -188,10 +207,26 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
     [balanceInfo, setBalanceInfo] = useState(false);
   const own = useMemo(() => state.entries.filter((e) => e.user_id === state.me.id), [state.entries, state.me.id]),
     running = own.find((e) => e.end === null);
-  const days = weekDays(offset, now),
-    current = weekDays(0, now),
-    today = dayKey(now),
-    prefs = state.me.preferences;
+  const showCalendar = !unclassified && view === "calendar";
+  const dailyCalendar = showCalendar && mobile;
+  const today = dayKey(now);
+  const viewedDay = calendarDay ?? today;
+  const days = dailyCalendar ? [viewedDay] : weekDays(offset, now);
+  const current = weekDays(0, now);
+  const prefs = state.me.preferences;
+  const workTime = state.workTime ?? emptyWorkTime;
+  const calendar = useMemo(() => workCalendar(workTime.schedules, workTime.leaves, workTime.holidays, prefs.weeklyTargetMinutes),
+    [workTime, prefs.weeklyTargetMinutes]);
+  const weekStart = current[0];
+  const weekEnd = shiftDay(weekStart, 7);
+  const viewedWeekStart = shiftDay(days[0], -weekday(days[0]));
+  const balanceStart = prefs.balanceStartDate ?? weekStart;
+  const targets = useMemo(() => ({
+    week: calendar.total(weekStart, weekEnd),
+    balance: calendar.total(balanceStart, weekEnd),
+    previous: calendar.total(balanceStart, weekStart),
+  }), [calendar, balanceStart, weekStart, weekEnd]);
+  const viewedTarget = useMemo(() => calendar.total(viewedWeekStart, shiftDay(viewedWeekStart, 7)), [calendar, viewedWeekStart]);
   const totalToday = useMemo(() => weeklyProgress(
     own,
     midnight(today),
@@ -201,41 +236,50 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
   ), [own, today, now]);
   const week = useMemo(() => weeklyProgress(
     own,
-    midnight(current[0]),
-    midnight(shiftDay(current[6], 1)),
-    prefs.weeklyTargetMinutes,
+    midnight(weekStart),
+    midnight(weekEnd),
+    targets.week.adjusted,
     now,
-  ), [own, current[0], prefs.weeklyTargetMinutes, now]);
-  const balanceStart = prefs.balanceStartDate ?? current[0];
+  ), [own, weekStart, weekEnd, targets.week.adjusted, now]);
   const balance = useMemo(() => cumulativeProgress(
     own,
     midnight(balanceStart),
-    midnight(shiftDay(current[6], 1)),
+    midnight(weekEnd),
     prefs.weeklyTargetMinutes,
     now,
-  ), [own, balanceStart, current[0], prefs.weeklyTargetMinutes, now]);
+    targets.balance.adjusted,
+  ), [own, balanceStart, weekEnd, prefs.weeklyTargetMinutes, targets.balance.adjusted, now]);
   const previous = useMemo(() => cumulativeProgress(
     own,
     midnight(balanceStart),
-    midnight(current[0]),
+    midnight(weekStart),
     prefs.weeklyTargetMinutes,
     now,
-  ), [own, balanceStart, current[0], prefs.weeklyTargetMinutes, now]);
-  const rangeStart = midnight(days[0]), rangeEnd = midnight(shiftDay(days[6], 1));
+    targets.previous.adjusted,
+  ), [own, balanceStart, weekStart, prefs.weeklyTargetMinutes, targets.previous.adjusted, now]);
+  const rangeStart = midnight(days[0]);
+  const rangeEnd = midnight(shiftDay(days[days.length - 1], 1));
   const visible = useMemo(() => own.filter((e) =>
     unclassified
       ? !e.task_id
       : e.start < rangeEnd && (e.end ?? now) >= rangeStart,
   ), [own, unclassified, rangeStart, rangeEnd, now]);
-  const groups = useMemo(() => {
+  const groups = (() => {
     const byDay = new Map<string, Entry[]>();
     for (const entry of visible) {
       const day = dayKey(entry.start);
       const items = byDay.get(day) ?? [];
       items.push(entry); byDay.set(day, items);
     }
+    if (!unclassified && !showCalendar) {
+      for (const day of days) {
+        const { holiday, absences } = calendar.details(day);
+        if ((holiday || absences.length) && !byDay.has(day)) byDay.set(day, []);
+      }
+    }
     return [...byDay].sort(([a], [b]) => b.localeCompare(a));
-  }, [visible]);
+  })();
+  const editLeave = (entry: Leave) => setLeaveEdit({ date: entry.start_date, entry });
   async function start(from?: Entry) {
     if (busy) return;
     setBusy(true);
@@ -292,8 +336,23 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
       ? ""
       : v.balance < 0 ? "balance-negative" : "balance-positive";
   const changeView = (v: "list" | "calendar") => {
+    if (v !== view && v === "calendar") setCalendarDay(null);
     setView(v);
     void preference({ timerView: v }).catch((e) => toast.error(e.message));
+  };
+  const movePeriod = (direction: number) => {
+    if (dailyCalendar) {
+      setCalendarDay((day) => {
+        const nextDay = shiftDay(day ?? today, direction);
+        return nextDay === today ? null : nextDay;
+      });
+    } else {
+      setOffset((week) => week + direction);
+    }
+  };
+  const resetPeriod = () => {
+    if (dailyCalendar) setCalendarDay(null);
+    else setOffset(0);
   };
   return (
     <>
@@ -309,10 +368,24 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
             : "Gardez le fil de votre journée. Chaque minute compte."
         }
       >
-        <Button variant="outline" onClick={() => setEdit({})}>
-          <Plus />
-          Ajouter du temps
-        </Button>
+        <div className="flex items-center">
+          <Button variant="outline" className={!unclassified ? "rounded-r-none" : undefined} onClick={() => setEdit({})}>
+            <Plus />
+            Ajouter du temps
+          </Button>
+          {!unclassified && <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="rounded-l-none border-l-0 text-muted-foreground" aria-label="Autres actions de saisie">
+                <ChevronDown />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-auto min-w-44">
+              <DropdownMenuItem onSelect={() => setLeaveEdit({ date: days.includes(today) ? today : days[0] })}>
+                Ajouter un congé
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>}
+        </div>
       </PageHeading>
       <section className="summary-grid" aria-label="Résumé de mon temps">
         <div>
@@ -330,7 +403,9 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
           <small>
             {week.target === null
               ? "Définissez votre objectif dans Mon profil"
-              : "Objectif hebdomadaire"}
+              : targets.week.holiday + targets.week.leave > 0
+                ? "Objectif ajusté · −" + workMinutesLabel(targets.week.holiday + targets.week.leave)
+                : "Objectif hebdomadaire"}
           </small>
         </div>
         <div>
@@ -371,6 +446,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
           <Classification
             taskId={task}
             projectId={project}
+            onCreateTask={() => setCreateTask(true)}
             onChange={(t, p) => {
               setTask(t);
               setProject(p);
@@ -420,7 +496,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
       </Card>
       <ErrorMessage message={error} />
       <div className="section-toolbar">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {unclassified ? (
             <h2>{visible.length} temps à classer</h2>
           ) : (
@@ -428,27 +504,38 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
               <Button
                 variant="outline"
                 size="icon"
-                aria-label="Semaine précédente"
-                onClick={() => setOffset((o) => o - 1)}
+                className={dailyCalendar ? "size-11" : undefined}
+                aria-label={dailyCalendar ? "Jour précédent" : "Semaine précédente"}
+                onClick={() => movePeriod(-1)}
               >
                 <ChevronLeft />
               </Button>
               <Button
                 variant="outline"
                 size="icon"
-                aria-label="Semaine suivante"
-                onClick={() => setOffset((o) => o + 1)}
+                className={dailyCalendar ? "size-11" : undefined}
+                aria-label={dailyCalendar ? "Jour suivant" : "Semaine suivante"}
+                onClick={() => movePeriod(1)}
               >
                 <ChevronRight />
               </Button>
-              <span className="text-sm font-medium">
-                {prettyDay(days[0], true)} — {prettyDay(days[6], true)}
+              <span className="text-sm font-medium" aria-live="polite">
+                {dailyCalendar
+                  ? prettyDay(viewedDay)
+                  : `${prettyDay(days[0], true)} — ${prettyDay(days[6], true)}`}
               </span>
-              <Badge variant="secondary" className="hidden sm:inline-flex">
-                S{isoWeek(days[0]).number}
-              </Badge>
-              {offset !== 0 && (
-                <Button variant="ghost" size="sm" onClick={() => setOffset(0)}>
+              {!dailyCalendar && (
+                <Badge variant="secondary" className="hidden sm:inline-flex">
+                  S{isoWeek(days[0]).number}
+                </Badge>
+              )}
+              {viewedWeekStart !== weekStart && viewedTarget.adjusted !== null && (
+                <span className="text-xs text-muted-foreground">
+                  Objectif · {workMinutesLabel(viewedTarget.adjusted)}
+                </span>
+              )}
+              {(dailyCalendar ? viewedDay !== today : offset !== 0) && (
+                <Button variant="ghost" size="sm" onClick={resetPeriod}>
                   Aujourd’hui
                 </Button>
               )}
@@ -476,10 +563,13 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
           </div>
         )}
       </div>
-      {!unclassified && view === "calendar" ? (
+      {showCalendar ? (
         <TimeCalendar
           entries={visible}
           days={days}
+          daily={dailyCalendar}
+          calendar={calendar}
+          onEditLeave={editLeave}
           onEdit={(entry) => setEdit({ entry })}
           onCreate={(initialStart, initialEnd) =>
             setEdit({ initialStart, initialEnd })
@@ -487,7 +577,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
         />
       ) : (
         <Card className="gap-0 overflow-hidden py-0">
-          {!visible.length ? (
+          {!groups.length ? (
             <Empty
               title={
                 unclassified
@@ -504,25 +594,41 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
             groups.map(([d, entries]) => (
                 <section key={d}>
                   <div className="day-title">
-                    <h3>{d === today ? "Aujourd’hui" : prettyDay(d)}</h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3>{d === today ? "Aujourd’hui" : prettyDay(d)}</h3>
+                      {!unclassified && <WorkDayMarks info={calendar.details(d)} onEdit={editLeave} />}
+                    </div>
                     <span>
                       {duration(
                         entries.reduce((n, e) => n + elapsed(e, now), 0),
                       )}
                     </span>
                   </div>
-                  <EntryList
+                  {entries.length > 0 && <EntryList
                     entries={entries}
                     onEdit={(entry) => setEdit({ entry })}
                     onHistory={setHistory}
                     onContinue={(entry) => void start(entry)}
-                  />
+                  />}
                 </section>
               ))
           )}
         </Card>
       )}
+      {createTask && (
+        <CatalogEditor
+          kind="tasks"
+          initialProject={project}
+          onClose={() => setCreateTask(false)}
+          onCreated={(created) => {
+            if (!created.assignees.includes(state.me.id)) return;
+            setTask(created.id);
+            setProject(created.project_id);
+          }}
+        />
+      )}
       {edit && <EntryEditor {...edit} onClose={() => setEdit(null)} />}{" "}
+      {leaveEdit && <LeaveEditor {...leaveEdit} calendar={calendar} ownEntries={own} now={now} onClose={() => setLeaveEdit(null)} />}
       {history && (
         <EntryHistory entry={history} onClose={() => setHistory(null)} />
       )}
@@ -533,13 +639,19 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
           description="Les calculs utilisent le fuseau Europe/Zurich."
         >
           <p className="text-sm leading-7">
-            Depuis le {prettyDay(balanceStart)}, vos temps sont comparés à votre
-            objectif hebdomadaire actuel multiplié par le nombre de semaines. La
-            semaine en cours compte entièrement dès le lundi. Les semaines
-            précédentes s’arrêtent au dimanche passé. Les corrections des
-            anciens temps sont prises en compte ; les congés ne sont pas
-            déduits. Modifiez la date de départ et l’objectif dans Mon profil.
+            Depuis le {prettyDay(balanceStart)}, vos temps sont comparés à
+            l’objectif de chaque semaine. L’horaire en vigueur à chaque date
+            détermine les heures déduites pour les congés et les jours fériés.
+            Les semaines antérieures au premier horaire utilisent l’objectif
+            hebdomadaire d’origine. La semaine en cours compte dès le lundi et le
+            report des semaines précédentes s’arrête au dimanche passé.
           </p>
+          {targets.week.base !== null && <p className="text-sm leading-7">
+            Cette semaine · {workMinutesLabel(targets.week.base)} prévues ·
+            Congés −{workMinutesLabel(targets.week.leave)} ·
+            Jours chômés −{workMinutesLabel(targets.week.holiday)} ·
+            Objectif {workMinutesLabel(targets.week.adjusted ?? 0)}
+          </p>}
         </Modal>
       )}
     </>
@@ -548,11 +660,17 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
 function TimeCalendar({
   entries,
   days,
+  daily,
+  calendar,
+  onEditLeave,
   onEdit,
   onCreate,
 }: {
   entries: Entry[];
   days: string[];
+  daily: boolean;
+  calendar: ReturnType<typeof workCalendar>;
+  onEditLeave: (leave: Leave) => void;
   onEdit: (entry: Entry) => void;
   onCreate: (start: string, end: string) => void;
 }) {
@@ -561,6 +679,7 @@ function TimeCalendar({
   const now = useNow();
   const container = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(620);
+  const [headerHeight, setHeaderHeight] = useState(62);
   const [drag, setDrag] = useState<{
     day: string;
     anchor: number;
@@ -569,15 +688,20 @@ function TimeCalendar({
   useEffect(() => {
     const el = container.current;
     if (!el) return;
-    const observer = new ResizeObserver(() => setHeight(el.clientHeight));
+    const header = el.querySelector(".calendar-corner");
+    const observer = new ResizeObserver(() => {
+      setHeight(el.clientHeight);
+      if (header) setHeaderHeight(header.getBoundingClientRect().height);
+    });
     observer.observe(el);
+    if (header) observer.observe(header);
     return () => observer.disconnect();
   }, []);
   const min = prefs.calendarRange === "full" ? 0 : prefs.calendarRange === "extended" ? 8 : 7,
     max = prefs.calendarRange === "full" ? 24 : prefs.calendarRange === "extended" ? 20 : 18;
   const scale =
     prefs.calendarFit !== false
-      ? Math.max(20, (height - 70) / (max - min))
+      ? Math.max(20, (height - headerHeight - 8) / (max - min))
       : (prefs.calendarZoom ?? 75);
   const shown = days.slice(0, prefs.calendarDays === 7 ? 7 : 5),
     today = dayKey(now);
@@ -596,18 +720,22 @@ function TimeCalendar({
     <Card className="gap-0 overflow-hidden py-0">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3">
         <p className="text-xs text-muted-foreground">
-          Glissez sur une journée pour ajouter un temps.
+          {daily
+            ? "Touchez un créneau pour ajouter un temps."
+            : "Glissez sur une journée pour ajouter un temps."}
         </p>
         <div className="flex flex-wrap gap-2">
-          <NativeSelect
-            label="Jours affichés"
-            value={String(prefs.calendarDays ?? 5)}
-            onChange={(v) => save({ calendarDays: Number(v) })}
-            options={[
-              ["5", "5 jours"],
-              ["7", "7 jours"],
-            ]}
-          />
+          {!daily && (
+            <NativeSelect
+              label="Jours affichés"
+              value={String(prefs.calendarDays ?? 5)}
+              onChange={(v) => save({ calendarDays: Number(v) })}
+              options={[
+                ["5", "5 jours"],
+                ["7", "7 jours"],
+              ]}
+            />
+          )}
           <NativeSelect
             label="Plage horaire"
             value={prefs.calendarRange ?? "workday"}
@@ -644,7 +772,7 @@ function TimeCalendar({
       </div>
       <div ref={container} className="calendar-scroll">
         <div
-          className="calendar-grid"
+          className={"calendar-grid" + (daily ? " daily" : "")}
           style={{
             gridTemplateColumns:
               "50px repeat(" + shown.length + ", minmax(115px, 1fr))",
@@ -662,8 +790,9 @@ function TimeCalendar({
                   "calendar-day-head " + (day === today ? "today" : "")
                 }
               >
-                <b>{prettyDay(day, true)}</b>
+                <b>{daily ? "Temps saisi" : prettyDay(day, true)}</b>
                 <span>{duration(total)}</span>
+                <WorkDayMarks info={calendar.details(day)} onEdit={onEditLeave} />
               </div>
             );
           })}

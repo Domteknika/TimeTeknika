@@ -206,6 +206,7 @@ test("Time editor: calendar deletion preserves a cancelled draft and supports un
   expect(deletedHistory.items).toHaveLength(2);
   expect(deletedHistory.items[0]).toMatchObject({ action: "delete", before: { description: marker }, after: { deleted: 1 } });
   await page.getByRole("button", { name: "Rétablir", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(calendarEntry).toBeVisible();
   const restored = (await (await page.request.get("/api/state")).json()).entries.find((e: { id: string }) => e.id === entry.id);
   expect(restored).toMatchObject({

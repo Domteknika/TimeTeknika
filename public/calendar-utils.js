@@ -84,12 +84,14 @@ export function weeklyProgress(entries, from, to, targetMinutes, timestamp) {
 
 const balanceDate = new Intl.DateTimeFormat('sv-SE', {timeZone:'Europe/Zurich', year:'numeric', month:'2-digit', day:'2-digit'});
 // Monday-to-Monday bounds: count calendar weeks, not 168-hour blocks (DST).
-export function cumulativeProgress(entries, from, to, targetMinutes, timestamp) {
+/** @param {number | null} [exactTargetMinutes] */
+export function cumulativeProgress(entries, from, to, targetMinutes, timestamp, exactTargetMinutes = undefined) {
   const day = value => Date.parse(balanceDate.format(value)+'T00:00:00Z');
   const weeks = Math.max(0, Math.round((day(to)-day(from))/(7*86400000)));
-  const progress = weeklyProgress(entries.filter(entry=>!entry.deleted), from, Math.min(to,timestamp), targetMinutes==null?null:targetMinutes*weeks, timestamp);
+  const target = exactTargetMinutes === undefined ? (targetMinutes == null ? null : targetMinutes * weeks) : exactTargetMinutes;
+  const progress = weeklyProgress(entries.filter(entry=>!entry.deleted), from, Math.min(to,timestamp), target, timestamp);
   return {...progress, weeks, from, to,
-    status: targetMinutes==null?'unset':weeks===0?'waiting':progress.balance<0?'deficit':progress.balance>0?'exceeded':'reached'};
+    status: target==null?'unset':weeks===0?'waiting':progress.balance<0?'deficit':progress.balance>0?'exceeded':'reached'};
 }
 
 // A long task total is normal; only an uninterrupted personal timer needs a reminder.
