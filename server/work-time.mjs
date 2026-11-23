@@ -1,5 +1,5 @@
-import { fail, id, text } from './domain.mjs';
-import { validWorkDate, workCalendar } from '../public/work-schedule.js';
+import { fail, id, nextDate, text } from './domain.mjs';
+import { leaveDays, scheduleOn, validWorkDate, weekday, workCalendar } from '../public/work-schedule.js';
 
 const toSchedule = ({ start_date, schedule, version }) => ({ start_date, ...JSON.parse(schedule), version });
 const toLeave = ({ id, start_date, end_date, start_part, end_part, exclusions, version }) =>
@@ -12,6 +12,49 @@ export async function workTimeSnapshot(store, userId) {
     store.all('SELECT id,date,name,kind,version FROM holidays ORDER BY date'),
   ]);
   return { schedules: schedules.map(toSchedule), leaves: leaves.map(toLeave), holidays };
+}
+
+export async function teamLeaveMonth(store, month, includeRest = false) {
+  const from = month + '-01';
+  if (!validWorkDate(from)) fail(400, 'Choisissez un mois au format AAAA-MM.');
+  const [year, index] = month.split('-').map(Number);
+  const to = new Date(Date.UTC(year, index, 0)).toISOString().slice(0, 10);
+  const [rows, schedules] = await Promise.all([store.all(`
+    SELECT l.id,l.user_id,l.start_date,l.end_date,l.start_part,l.end_part,l.exclusions,l.version,u.name,u.color
+    FROM leaves l JOIN users u ON u.id=l.user_id
+    WHERE l.start_date<=? AND l.end_date>=? AND u.active=true
+    ORDER BY u.name,u.id,l.start_date,l.id`, to, from),
+    includeRest ? store.all(`
+      SELECT s.user_id,s.start_date,s.schedule,s.version,u.name,u.color
+      FROM work_schedules s JOIN users u ON u.id=s.user_id
+      WHERE u.active=true AND s.start_date<=?
+      AND NOT EXISTS (
+        SELECT 1 FROM work_schedules newer WHERE newer.user_id=s.user_id
+        AND newer.start_date>s.start_date AND newer.start_date<=?
+      )
+      ORDER BY s.user_id,s.start_date`, to, from) : [],
+  ]);
+  const leave = rows.flatMap(row => Array.from(leaveDays(toLeave(row), from, to), ({ date, part }) => ({
+    date, part, user_id: row.user_id, name: row.name, color: row.color,
+  })));
+  const booked = new Set(leave.map(row => JSON.stringify([row.user_id, row.date])));
+  const people = new Map();
+  for (const row of schedules) {
+    if (!people.has(row.user_id)) people.set(row.user_id, { name: row.name, color: row.color, schedules: [] });
+    people.get(row.user_id).schedules.push(toSchedule(row));
+  }
+  const rest = [];
+  for (const [user_id, person] of people) {
+    for (let date = from; date <= to; date = nextDate(date)) {
+      const day = weekday(date);
+      if (day >= 5 || booked.has(JSON.stringify([user_id, date]))) continue;
+      const hours = scheduleOn(person.schedules, date)?.days[day];
+      if (hours?.[0] === 0 && hours[1] === 0) {
+        rest.push({ date, kind: 'rest', user_id, name: person.name, color: person.color });
+      }
+    }
+  }
+  return [...leave, ...rest];
 }
 
 function checkVersion(current, expected) {
@@ -76,6 +119,23 @@ export async function changeHoliday(store, user, method, holidayId, data) {
   if (!validWorkDate(date)) fail(400, 'Date chômée invalide.');
   if (!['holiday', 'closure'].includes(kind)) fail(400, 'Type de date chômée invalide.');
   const name = text(data.name, 'Nom', 100);
+  if (data.end_date !== undefined) {
+    const end = data.end_date;
+    if (method !== 'POST' || kind !== 'closure' || !validWorkDate(end) || end < date ||
+      Date.parse(end) - Date.parse(date) > 365 * 86400000) {
+      fail(400, 'Choisissez une période de fermeture de 1 à 366 jours.');
+    }
+    const existing = new Set((await store.all('SELECT date FROM holidays WHERE date>=? AND date<=?', date, end)).map(row => row.date));
+    let added = 0;
+    for (let day = date; day <= end; day = nextDate(day)) {
+      if (existing.has(day)) continue;
+      const holiday = { id: id(), date: day, name, kind, version: 1 };
+      await store.run('INSERT INTO holidays(id,date,name,kind) VALUES (?,?,?,?)', holiday.id, day, name, kind);
+      await store.audit(user, 'holiday', holiday.id, 'create', null, holiday);
+      added++;
+    }
+    return { added, skipped: existing.size };
+  }
   if (await store.one('SELECT id FROM holidays WHERE date=? AND id!=?', date, holidayId || '')) {
     fail(409, 'Une date chômée existe déjà ce jour-là.', 'duplicate');
   }

@@ -36,6 +36,13 @@ export function scheduleOn(schedules, date) {
 /** @param {WorkDay} day @param {DayPart} part */
 const minutesFor = (day, part) => part === 'am' ? day[0] : part === 'pm' ? day[1] : day[0] + day[1];
 
+/** @param {WorkDay} parts */
+function leaveDayUnits(parts, morning, afternoon) {
+  const am = Number(parts[0] > 0);
+  const pm = Number(parts[1] > 0);
+  return am + pm ? (am * Number(morning) + pm * Number(afternoon)) / (am + pm) : 0;
+}
+
 /** @param {LeavePeriod} period @returns {DayPart} */
 function partOn(period, day) {
   if (day === period.start_date) return period.start_part;
@@ -46,6 +53,17 @@ function partOn(period, day) {
 function* datesBetween(from, to) {
   const end = dayValue(to);
   for (let at = dayValue(from); at <= end; at += DAY) yield dateKey(at);
+}
+
+/** @param {Leave} leave */
+export function* leaveDays(leave, from = leave.start_date, to = leave.end_date) {
+  const excluded = new Set(leave.excluded_dates);
+  for (const date of datesBetween(
+    from > leave.start_date ? from : leave.start_date,
+    to < leave.end_date ? to : leave.end_date,
+  )) {
+    if (!excluded.has(date)) yield { date, part: partOn(leave, date) };
+  }
 }
 
 /**
@@ -59,11 +77,9 @@ export function workCalendar(schedules, leaves, holidays, legacyTarget) {
   /** @type {Map<string, { leave: Leave, part: DayPart }[]>} */
   const leavesByDay = new Map();
   for (const leave of leaves) {
-    const excluded = new Set(leave.excluded_dates);
-    for (const date of datesBetween(leave.start_date, leave.end_date)) {
-      if (excluded.has(date)) continue;
+    for (const { date, part } of leaveDays(leave)) {
       if (!leavesByDay.has(date)) leavesByDay.set(date, []);
-      leavesByDay.get(date).push({ leave, part: partOn(leave, date) });
+      leavesByDay.get(date).push({ leave, part });
     }
   }
   const legacyDays = distributeWeeklyTarget(legacyTarget);
@@ -100,6 +116,7 @@ export function workCalendar(schedules, leaves, holidays, legacyTarget) {
     const excluded_dates = [];
     const covered = [];
     let minutes = 0;
+    let days = 0;
     let missingSchedule = false;
     for (const date of datesBetween(start_date, end_date)) {
       const info = details(date);
@@ -115,13 +132,14 @@ export function workCalendar(schedules, leaves, holidays, legacyTarget) {
         return { error: 'Un congé couvre déjà tout ou partie du ' + date + '.' };
       }
       minutes += amount;
+      days += leaveDayUnits(info.parts, part !== 'pm', part !== 'am');
       covered.push({ date, part });
     }
     if (missingSchedule) return { error: 'Configurez votre répartition hebdomadaire dans Mon profil à partir de cette période.' };
     if (!minutes) return { error: single && holidaysByDay.has(start_date)
       ? 'Cette date est déjà fériée ou chômée.'
       : 'Aucune heure de travail n’est prévue sur le créneau choisi.' };
-    return { minutes, excluded_dates, covered };
+    return { minutes, days, excluded_dates, covered };
   }
 
   // Les bornes du solde sont des lundis en Europe/Zurich. Avant le premier
@@ -141,5 +159,19 @@ export function workCalendar(schedules, leaves, holidays, legacyTarget) {
     return { base, holiday, leave, adjusted: base === null ? null : base - holiday - leave };
   }
 
-  return { details, preview, total };
+  function annual(year) {
+    let leave = 0;
+    let closures = 0;
+    for (const date of datesBetween(year + '-01-01', year + '-12-31')) {
+      const { holiday, planned, parts, absences } = details(date);
+      if (!planned) continue;
+      if (holiday?.kind === 'closure') closures++;
+      if (!holiday && absences.length) {
+        leave += leaveDayUnits(parts, absences.some(({ part }) => part !== 'pm'), absences.some(({ part }) => part !== 'am'));
+      }
+    }
+    return { leave, closures };
+  }
+
+  return { details, preview, total, annual };
 }

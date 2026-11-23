@@ -215,6 +215,33 @@ test('Chevauchement détecté, confirmation explicite et dates invalides rejeté
   assert.equal((await c.request('/api/entries','POST',manual({start:'bad'}))).status,400);
   assert.equal((await c.request('/api/entries','POST',manual({end:'2026-02-10T07:00:00Z'}))).status,400);
 });
+test('Saisie manuelle : création et déplacement vers un créneau futur',async t=>{
+  const {client}=await fixture(t),c=await client('demo-emma');
+  const tomorrow=Date.now()+86400000;
+  const hour=offset=>new Date(tomorrow+offset*3600000).toISOString();
+  const future=manual({start:hour(0),end:hour(1)});
+  const created=await c.request('/api/entries','POST',future);
+  assert.equal(created.status,200);
+  const {id,version}=created.data.entry;
+  const overlap=await c.request('/api/entries','POST',future);
+  assert.equal(overlap.status,409);
+  assert.equal(overlap.data.error,'overlap');
+  assert.equal((await c.request('/api/entries','POST',{...future,end:future.start})).status,400);
+
+  const edited=await c.request('/api/entries/'+id,'PATCH',{...future,start:hour(2),end:hour(3),version});
+  assert.equal(edited.status,200);
+  const state=await c.request('/api/state');
+  const saved=state.data.entries.find(entry=>entry.id===id);
+  assert.equal(saved.start,Math.floor(Date.parse(hour(2))/1000)*1000);
+  assert.equal(saved.end,Math.floor(Date.parse(hour(3))/1000)*1000);
+
+  const {data:{entry:running}}=await c.request('/api/timer/start','POST',future);
+  const correction=await c.request('/api/entries/'+running.id,'PATCH',{
+    ...future,start:new Date(running.start).toISOString(),version:running.version
+  });
+  assert.equal(correction.status,400);
+});
+
 test('Rapports : privacy côté serveur et cumuls exacts de deux personnes sur une tâche',async t=>{
   const {client}=await fixture(t),emma=await client('demo-emma'),lucas=await client('demo-lucas'),alex=await client('demo-alex');
   await emma.request('/api/entries','POST',manual());await lucas.request('/api/entries','POST',manual({end:'2026-02-10T10:30:00Z'}));

@@ -17,9 +17,21 @@ export function exportPeriod(period,timestamp=Date.now()) {
   if(end<=begin||end-begin>370*86400000)fail(400,'Choisissez une période comprise entre 1 et 370 jours.');
   return {from,to,begin,end};
 }
+export function omitTaskStatus(config) {
+  const changeColumns = Array.isArray(config?.columns) && config.columns.some(column => column?.key === 'status');
+  const changeSort = config?.sort?.key === 'status';
+  if (!changeColumns && !changeSort) return config;
+
+  const columns = changeColumns ? config.columns.filter(column => column?.key !== 'status') : config.columns;
+  return {
+    ...config,
+    columns: changeColumns && !columns.length ? [{ key: 'duration', label: 'Durée' }] : columns,
+    sort: changeSort ? { ...config.sort, key: 'start' } : config.sort,
+  };
+}
 export function validateExportConfig(input,user) {
   if(!object(input)||!object(input.filters)||!object(input.period)||!object(input.document)||!object(input.sort))fail(400,'Configuration d’export invalide.');
-  const config=structuredClone(input);
+  const config=omitTaskStatus(structuredClone(input));
   config.version=1;config.mode=choice(config.mode,['detail','summary'],'Présentation');
   choice(config.period.preset,EXPORT_PERIODS.map(([v])=>v),'Période');
   if(config.period.preset==='custom'){midnight(config.period.from);midnight(config.period.to);}
@@ -65,7 +77,7 @@ export function buildExport(entries,lookups,input,user,timestamp=Date.now()) {
     if(f.query&&!normalized(entry.description).includes(normalized(f.query)))continue;
     const seconds=Math.max(0,Math.floor((end-start)/1000));
     const row={id:entry.id,entry,startMs:start,endMs:end,seconds,person:maps.users.get(entry.user_id)?.name??'Ancien membre',client:c?.name??'Sans client',project:p?.name??'Sans projet',task:t?.name??'À classer',description:entry.description,
-      ...dateValues(dateInZone(start)),start:clock(start),end:clock(end),duration:seconds,decimal:seconds/3600,count:1,status:({todo:'À faire',doing:'En cours',done:'Terminée'})[t?.status]??'',timer:entry.end===null?'En cours':'Arrêté',
+      ...dateValues(dateInZone(start)),start:clock(start),end:clock(end),duration:seconds,decimal:seconds/3600,count:1,timer:entry.end===null?'En cours':'Arrêté',
       identities:{person:entry.user_id,client:c?.id??null,project:p?.id??null,task:t?.id??null}};
     source.push({id:row.id,person:row.person,day:row.day,project:row.project,task:row.task,description:row.description,seconds,excluded:excluded.has(row.id)});
     if(!excluded.has(row.id))kept.push(row);

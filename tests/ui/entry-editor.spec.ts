@@ -143,6 +143,60 @@ test("Time editor: a failed task save is visible and a running timer stays runni
   await stop.click();
 });
 
+test("Le bandeau suit le classement du chrono depuis le calendrier", async ({ page }) => {
+  await page.goto("/#timer");
+  await page.getByRole("button", { name: /Lucas Morel/ }).click();
+  await page.getByRole("button", { name: "Calendrier", exact: true }).click();
+  await page.getByLabel("Jours affichés").selectOption("7");
+  await page.getByLabel("Plage horaire").selectOption("full");
+  const timer = page.locator(".timer-card");
+  const activeActivity = timer.locator(".timer-actions");
+  const taskChoice = timer.getByRole("combobox", { name: "Tâche", exact: true });
+  const projectChoice = timer.getByRole("combobox", { name: "Projet", exact: true });
+  const switchActivity = timer.getByRole("button", { name: "Basculer sur cette activité" });
+  const stop = timer.getByRole("button", { name: "Arrêter le chrono", exact: true });
+  const snapshot = async () => (await page.request.get("/api/state")).json();
+  await timer.getByRole("button", { name: "Démarrer", exact: true }).click();
+  await expect(activeActivity).toContainText("À classer");
+  const before = await snapshot();
+  const running = before.entries.find((entry: { end: number | null }) => entry.end === null);
+  const project = "Résidence Les Cèdres";
+
+  async function classifyFromCalendar(task: string) {
+    await page.locator(".calendar-entry.active").click();
+    const editor = page.getByRole("dialog", { name: "Modifier le temps", exact: true });
+    await editor.getByRole("combobox", { name: "Tâche", exact: true }).click();
+    await page.getByRole("textbox", { name: "Rechercher une tâche", exact: true }).fill(task);
+    await page.locator('[data-slot="popover-content"]').getByRole("button", { name: task, exact: true }).click();
+    await expect(editor.getByRole("status")).toContainText("Tâche enregistrée.");
+    await editor.getByRole("button", { name: "Annuler", exact: true }).click();
+  }
+
+  await classifyFromCalendar("Plans d’exécution");
+  await expect(activeActivity).toContainText("Plans d’exécution · " + project);
+  await expect(taskChoice).toContainText("Plans d’exécution");
+  await expect(projectChoice).toContainText(project);
+  await expect(switchActivity).toHaveCount(0);
+
+  await projectChoice.click();
+  await page.getByRole("option", { name: /Rénovation Atelier/ }).click();
+  await expect(switchActivity).toBeVisible();
+  await classifyFromCalendar("Coordination technique");
+  await expect(activeActivity).toContainText("Coordination technique · " + project);
+  await expect(projectChoice).toContainText("Rénovation Atelier");
+
+  const after = await snapshot();
+  expect(after.entries).toHaveLength(before.entries.length);
+  expect(after.entries.find((entry: { end: number | null }) => entry.end === null)).toMatchObject({
+    id: running.id, start: running.start, task_id: "task-coordination", project_id: "project-cedres",
+  });
+  await page.reload();
+  await expect(taskChoice).toContainText("Coordination technique");
+  await expect(projectChoice).toContainText(project);
+  await stop.click();
+  await expect(stop).toHaveCount(0);
+});
+
 test("Time editor: calendar deletion preserves a cancelled draft and supports undo", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Alex Martin/ }).click();

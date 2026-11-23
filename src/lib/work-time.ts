@@ -1,6 +1,11 @@
 import type { WorkTime } from "./types";
 
 export const emptyWorkTime: WorkTime = { schedules: [], leaves: [], holidays: [] };
+const dayNumber = new Intl.NumberFormat("fr-CH");
+
+export function workDaysLabel(days: number) {
+  return dayNumber.format(days) + (Math.abs(days) > 1 ? " jours" : " jour");
+}
 
 export function workMinutesLabel(minutes: number) {
   if (minutes > 0 && minutes < 60) return minutes + " min";

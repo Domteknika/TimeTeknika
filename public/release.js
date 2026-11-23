@@ -1,1 +1,1 @@
-export const APP_VERSION='2026.11.18-postgres-3';
+export const APP_VERSION='2026.11.19-postgres-5';

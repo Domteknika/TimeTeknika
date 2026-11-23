@@ -8,7 +8,6 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Pencil,
   History,
   Trash2,
@@ -43,7 +42,6 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Classification } from "@/components/classification";
 import {
   PageHeading,
@@ -191,9 +189,8 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
   const [view, setView] = useState(state.me.preferences.timerView ?? "list"),
     [offset, setOffset] = useState(0);
   const [calendarDay, setCalendarDay] = useState<string | null>(null);
-  const [description, setDescription] = useState(""),
-    [task, setTask] = useState(""),
-    [project, setProject] = useState("");
+  const [description, setDescription] = useState("");
+  const [selection, setSelection] = useState({ task: "", project: "", runningId: "" });
   const [createTask, setCreateTask] = useState(false);
   const [leaveEdit, setLeaveEdit] = useState<{ date: string; entry?: Leave } | null>(null);
   const [busy, setBusy] = useState(false),
@@ -207,6 +204,17 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
     [balanceInfo, setBalanceInfo] = useState(false);
   const own = useMemo(() => state.entries.filter((e) => e.user_id === state.me.id), [state.entries, state.me.id]),
     running = own.find((e) => e.end === null);
+  const runningTaskId = running?.task_id ?? "";
+  const runningProjectId = running?.project_id ?? "";
+  const { task, project } = running && selection.runningId !== running.id
+    ? { task: runningTaskId, project: runningProjectId }
+    : selection;
+  const selectClassification = (task: string, project: string) =>
+    setSelection({ task, project, runningId: running?.id ?? "" });
+  const runningClassification = [
+    runningTaskId && state.tasks.find((item) => item.id === runningTaskId)?.name,
+    runningProjectId && state.projects.find((item) => item.id === runningProjectId)?.name,
+  ].filter(Boolean).join(" · ");
   const showCalendar = !unclassified && view === "calendar";
   const dailyCalendar = showCalendar && mobile;
   const today = dayKey(now);
@@ -368,24 +376,10 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
             : "Gardez le fil de votre journée. Chaque minute compte."
         }
       >
-        <div className="flex items-center">
-          <Button variant="outline" className={!unclassified ? "rounded-r-none" : undefined} onClick={() => setEdit({})}>
-            <Plus />
-            Ajouter du temps
-          </Button>
-          {!unclassified && <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="rounded-l-none border-l-0 text-muted-foreground" aria-label="Autres actions de saisie">
-                <ChevronDown />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-auto min-w-44">
-              <DropdownMenuItem onSelect={() => setLeaveEdit({ date: days.includes(today) ? today : days[0] })}>
-                Ajouter un congé
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>}
-        </div>
+        <Button variant="outline" onClick={() => setEdit({})}>
+          <Plus />
+          Ajouter du temps
+        </Button>
       </PageHeading>
       <section className="summary-grid" aria-label="Résumé de mon temps">
         <div>
@@ -447,10 +441,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
             taskId={task}
             projectId={project}
             onCreateTask={() => setCreateTask(true)}
-            onChange={(t, p) => {
-              setTask(t);
-              setProject(p);
-            }}
+            onChange={selectClassification}
           />
         </div>
         <div className="timer-actions">
@@ -462,9 +453,14 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
               {running ? <LiveDuration entry={running} /> : "00:00:00"}
             </strong>
             {running && (
-              <small className="block max-w-52 truncate text-muted-foreground">
-                {running.description || "Sans description"}
-              </small>
+              <div className="max-w-52 text-muted-foreground">
+                {running.description && (
+                  <small className="block truncate" title={running.description}>{running.description}</small>
+                )}
+                <small className="block break-words" aria-live="polite">
+                  {runningClassification || "À classer"}
+                </small>
+              </div>
             )}
           </div>
           {running ? (
@@ -483,7 +479,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
               Démarrer
             </Button>
           )}
-          {running && (description || task || project) && (
+          {running && (description || task !== runningTaskId || project !== runningProjectId) && (
             <Button
               variant="outline"
               disabled={busy}
@@ -622,8 +618,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
           onClose={() => setCreateTask(false)}
           onCreated={(created) => {
             if (!created.assignees.includes(state.me.id)) return;
-            setTask(created.id);
-            setProject(created.project_id);
+            selectClassification(created.id, created.project_id);
           }}
         />
       )}

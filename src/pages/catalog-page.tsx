@@ -43,7 +43,7 @@ import { EntryList } from "./time-page";
 const labels = {
   tasks: [
     "Vos tâches, en mouvement.",
-    "Retrouvez les activités de l’équipe et leur avancement.",
+    "Retrouvez les tâches de l’équipe et les temps qui leur sont consacrés.",
     "Nouvelle tâche",
   ],
   projects: [
@@ -63,7 +63,7 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
   const [query, setQuery] = useState(""),
     [client, setClient] = useState(""),
     [project, setProject] = useState(""),
-    [status, setStatus] = useState("active"),
+    [archiveFilter, setArchiveFilter] = useState("active"),
     [sort, setSort] = useState("name"),
     [time, setTime] = useState("all"),
     [scope, setScope] = useState(state.me.preferences.taskScope ?? "mine");
@@ -89,6 +89,9 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
     [id, entries.reduce((sum, e) => sum + elapsed(e, now), 0)])), [groupedEntries, now]);
   const itemEntries = (item: Client) => groupedEntries.get(item.id) ?? [];
   const total = (item: Client) => totals.get(item.id) ?? 0;
+  const clientsById = new Map(state.clients.map((item) => [item.id, item]));
+  const groupByClient = kind === "projects" && sort === "client-asc";
+  const showOwnerColumn = kind !== "clients" && !groupByClient;
   const rows = (state[kind] as (Client | Project | Task)[])
     .filter((item) => {
       const p =
@@ -97,7 +100,7 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
           : kind === "tasks"
             ? state.projects.find((p) => p.id === (item as Task).project_id)
             : null;
-      const c = state.clients.find((c) => c.id === p?.client_id);
+      const c = p ? clientsById.get(p.client_id) : undefined;
       if (
         !normalize(
           item.name + " " + (p?.name ?? "") + " " + (c?.name ?? ""),
@@ -116,13 +119,8 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
       if (kind !== "clients") {
         const archived = !!(item as Project).archived;
         if (
-          (status === "active" && archived) ||
-          (status === "archived" && !archived)
-        )
-          return false;
-        if (
-          ["todo", "doing", "done"].includes(status) &&
-          ((item as Task).status !== status || archived)
+          (archiveFilter === "active" && archived) ||
+          (archiveFilter === "archived" && !archived)
         )
           return false;
       }
@@ -138,6 +136,25 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
             ? b.name.localeCompare(a.name, "fr")
             : a.name.localeCompare(b.name, "fr"),
     );
+  const rowsByClient = new Map<Client | undefined, typeof rows>();
+  if (groupByClient) {
+    for (const item of rows) {
+      const owner = clientsById.get((item as Project).client_id);
+      const group = rowsByClient.get(owner);
+      if (group) group.push(item);
+      else rowsByClient.set(owner, [item]);
+    }
+  } else {
+    rowsByClient.set(undefined, rows);
+  }
+  const sections = [...rowsByClient].sort(([a], [b]) => {
+    if (!a || !b) return Number(!a) - Number(!b);
+    return a.name.localeCompare(b.name, "fr") || a.id.localeCompare(b.id);
+  });
+  const projectTasks = kind === "projects" && detail
+    ? state.tasks.filter((task) => task.project_id === detail.id)
+        .sort((a, b) => a.name.localeCompare(b.name, "fr"))
+    : [];
   const [title, description, create] = labels[kind];
   return (
     <>
@@ -218,20 +235,13 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
           )}
           {kind !== "clients" && (
             <NativeSelect
-              label="Statut du catalogue"
-              value={status}
-              onChange={setStatus}
+              label="Afficher les éléments actifs ou archivés"
+              value={archiveFilter}
+              onChange={setArchiveFilter}
               options={[
                 ["active", "Actifs"],
                 ["archived", "Archivés"],
                 ["all", "Tous"],
-                ...(kind === "tasks"
-                  ? ([
-                      ["todo", "À faire"],
-                      ["doing", "En cours"],
-                      ["done", "Terminées"],
-                    ] as [string, string][])
-                  : []),
               ]}
             />
           )}
@@ -252,6 +262,9 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
             options={[
               ["name", "Nom A–Z"],
               ["name-desc", "Nom Z–A"],
+              ...(kind === "projects"
+                ? [["client-asc", "Par client (A–Z)"] as [string, string]]
+                : []),
               ["time-desc", "Temps décroissant"],
               ["time-asc", "Temps croissant"],
             ]}
@@ -267,7 +280,7 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
             <TableHeader>
               <TableRow>
                 <TableHead className="pl-5">Nom</TableHead>
-                {kind !== "clients" && (
+                {showOwnerColumn && (
                   <TableHead>
                     {kind === "tasks" ? "Projet" : "Client"}
                   </TableHead>
@@ -279,8 +292,15 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
                 <TableHead className="text-right pr-5">Actions</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
-              {rows.map((item) => {
+            {sections.map(([owner, items]) => <TableBody key={owner?.id ?? ""}>
+              {groupByClient && (
+                <TableRow className="bg-muted/60 hover:bg-muted/60">
+                  <th scope="rowgroup" colSpan={4} className="h-9 border-t px-5 text-left text-sm font-semibold">
+                    {owner?.name ?? "Sans client"}
+                  </th>
+                </TableRow>
+              )}
+              {items.map((item) => {
                 const p =
                     kind === "projects"
                       ? (item as Project)
@@ -306,29 +326,17 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
                         </span>
                         <span>
                           <b className="block font-medium">{item.name}</b>
-                          {task && (
-                            <small className="text-muted-foreground">
-                              {
-                                {
-                                  todo: "À faire",
-                                  doing: "En cours",
-                                  done: "Terminée",
-                                }[task.status]
-                              }
-                            </small>
-                          )}
                           {!!(item as Project).archived && (
                             <Badge variant="secondary">Archivé</Badge>
                           )}
                         </span>
                       </button>
                     </TableCell>
-                    {kind !== "clients" && (
+                    {showOwnerColumn && (
                       <TableCell className="text-muted-foreground">
                         {kind === "tasks"
                           ? p?.name
-                          : state.clients.find((c) => c.id === p?.client_id)
-                              ?.name}
+                          : clientsById.get(p?.client_id ?? "")?.name}
                       </TableCell>
                     )}
                     <TableCell>
@@ -421,7 +429,7 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
                   </TableRow>
                 );
               })}
-            </TableBody>
+            </TableBody>)}
           </Table>
         )}
       </Card>
@@ -442,18 +450,37 @@ export function CatalogPage({ kind }: { kind: CatalogKind }) {
       {detail && (
         <Modal
           title={detail.name}
-          description="Temps enregistrés visibles selon vos droits d’accès."
+          description={kind === "projects"
+            ? "Tâches rattachées à ce projet."
+            : "Temps enregistrés visibles selon vos droits d’accès."}
           onClose={() => setDetail(null)}
-          wide
+          wide={kind !== "projects"}
         >
-          <p className="text-3xl font-semibold tabular-nums">
-            {duration(total(detail))}
-          </p>
-          <EntryList
-            entries={itemEntries(detail)}
-            onEdit={setEntry}
-            onHistory={setHistory}
-          />
+          {kind === "projects" ? (
+            projectTasks.length ? (
+              <ul className="divide-y">
+                {projectTasks.map((task) => (
+                  <li key={task.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3 text-sm">
+                    <span className="min-w-0 break-words font-medium">{task.name}</span>
+                    {!!task.archived && <Badge variant="secondary">Archivée</Badge>}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">Aucune tâche dans ce projet.</p>
+            )
+          ) : (
+            <>
+              <p className="text-3xl font-semibold tabular-nums">
+                {duration(total(detail))}
+              </p>
+              <EntryList
+                entries={itemEntries(detail)}
+                onEdit={setEntry}
+                onHistory={setHistory}
+              />
+            </>
+          )}
         </Modal>
       )}
       {entry && <EntryEditor entry={entry} onClose={() => setEntry(null)} />}{" "}

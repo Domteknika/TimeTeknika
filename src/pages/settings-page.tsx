@@ -18,7 +18,7 @@ import type { Person } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { HolidaySettings, WorkScheduleSettings } from "@/components/work-time";
+import { AnnualLeaveSettings, HolidaySettings, WorkScheduleSettings } from "@/components/work-time";
 import {
   Table,
   TableHeader,
@@ -169,6 +169,7 @@ export function SettingsPage() {
           </AsyncForm>
         </Card>
       </div>
+      <AnnualLeaveSettings />
       <HolidaySettings />
       {canViewTeam(state.me.role) && (
         <>

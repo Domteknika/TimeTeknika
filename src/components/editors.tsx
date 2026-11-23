@@ -23,7 +23,6 @@ import {
   Field,
   Choice,
   ErrorMessage,
-  NativeSelect,
 } from "./shared";
 import { Classification } from "./classification";
 export type CatalogKind = "clients" | "projects" | "tasks";
@@ -47,8 +46,7 @@ export function CatalogEditor({
   const [parent, setParent] = useState(
     task?.project_id ?? project?.client_id ?? initialProject,
   );
-  const [color, setColor] = useState(project?.color ?? PROJECT_COLORS[0].value),
-    [status, setStatus] = useState(task?.status ?? "todo");
+  const [color, setColor] = useState(project?.color ?? PROJECT_COLORS[0].value);
   const [assignees, setAssignees] = useState(task?.assignees ?? [state.me.id]);
   return (
     <Modal
@@ -74,7 +72,6 @@ export function CatalogEditor({
             Object.assign(data, {
               project_id: parent,
               description: f.get("description"),
-              status,
               assignees,
             });
           const result = await mutate<{ task?: Task }>(
@@ -145,44 +142,30 @@ export function CatalogEditor({
           </Field>
         )}
         {kind === "tasks" && (
-          <>
-            <Field label="Statut">
-              <NativeSelect
-                label="Statut"
-                value={status}
-                onChange={(v) => setStatus(v as Task["status"])}
-                options={[
-                  ["todo", "À faire"],
-                  ["doing", "En cours"],
-                  ["done", "Terminée"],
-                ]}
-              />
-            </Field>
-            <Field label="Personnes affectées">
-              <div className="grid gap-2">
-                {state.users
-                  .filter((u) => u.active || task?.assignees.includes(u.id))
-                  .map((u) => (
-                    <label
-                      key={u.id}
-                      className="flex items-center gap-3 rounded-md border p-3"
-                    >
-                      <Checkbox
-                        checked={assignees.includes(u.id)}
-                        onCheckedChange={(v) =>
-                          setAssignees((previous) =>
-                            v
-                              ? [...previous, u.id]
-                              : previous.filter((id) => id !== u.id),
-                          )
-                        }
-                      />
-                      {u.name}{!u.active && " (accès retiré)"}
-                    </label>
-                  ))}
-              </div>
-            </Field>
-          </>
+          <Field label="Personnes affectées">
+            <div className="grid gap-2">
+              {state.users
+                .filter((u) => u.active || task?.assignees.includes(u.id))
+                .map((u) => (
+                  <label
+                    key={u.id}
+                    className="flex items-center gap-3 rounded-md border p-3"
+                  >
+                    <Checkbox
+                      checked={assignees.includes(u.id)}
+                      onCheckedChange={(v) =>
+                        setAssignees((previous) =>
+                          v
+                            ? [...previous, u.id]
+                            : previous.filter((id) => id !== u.id),
+                        )
+                      }
+                    />
+                    {u.name}{!u.active && " (accès retiré)"}
+                  </label>
+                ))}
+            </div>
+          </Field>
         )}
       </AsyncForm>
     </Modal>

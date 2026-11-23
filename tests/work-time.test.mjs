@@ -38,6 +38,25 @@ test('Horaire : les deux répartitions à 80 % et une journée de 6 h déduisent
     .total(start_date, endOfWeek).adjusted, 1575);
 });
 
+test('Solde annuel : demi-journées, fermetures, fériés, repos et passage d’année', () => {
+  const schedules = [{ start_date, days: fourDays, version: 1 },
+    { start_date: '2027-01-01', days: [[360, 0], ...sixHours.slice(1)], version: 1 }];
+  const leave = (id, dates) => ({ ...dates, id, excluded_dates: [], version: 1 });
+  const closure = (date) => ({ ...holiday, date, id: date, kind: 'closure' });
+  const leaves = [
+    leave('half', period('2026-12-22', 'pm')),
+    leave('overlap', period(thursday, 'full')),
+    leave('holiday-leave', period(friday, 'full')),
+    leave('across-years', period('2026-12-31', 'pm', '2027-01-04', 'am')),
+  ];
+  const calendar = workCalendar(schedules, leaves, [closure(thursday), closure('2026-12-26'), holiday,
+    { ...holiday, date: '2027-01-01', id: 'new-year' }], null);
+  // La période de fin d’année couvre un jeudi après-midi et le lundi suivant.
+  assert.deepEqual(calendar.annual('2026'), { leave: 1, closures: 1 });
+  assert.deepEqual(calendar.annual('2027'), { leave: 1, closures: 0 });
+  assert.equal(calendar.preview(period('2027-01-11', 'am')).days, 1);
+});
+
 for (const backend of ['SQLite', 'PostgreSQL']) {
   test(backend + ' HTTP : horaires personnels, congés versionnés et fériés partagés', async (t) => {
     let app;
@@ -65,6 +84,7 @@ for (const backend of ['SQLite', 'PostgreSQL']) {
       };
     }
     const admin = client(), emma = client(), lucas = client();
+    await client()('/api/team-leaves?month=2026-12', { status: 401 });
     for (const [call, user_id] of [[admin, 'demo-alex'], [emma, 'demo-emma'], [lucas, 'demo-lucas']]) {
       await call('/api/demo-login', { method: 'POST', body: { user_id } });
     }
@@ -92,11 +112,41 @@ for (const backend of ['SQLite', 'PostgreSQL']) {
     assert.deepEqual(other.workTime.leaves, []);
     assert.deepEqual(own.entries, seeded.entries);
     assert.deepEqual(other.workTime.holidays, [savedHoliday]);
+    const team = await lucas('/api/team-leaves?month=2026-12');
+    assert.deepEqual(team.map(({ date, name, part }) => ({ date, name, part })), [{ date: thursday, name: 'Emma Laurent', part: 'pm' }]);
+    assert.deepEqual(Object.keys(team[0]).sort(), ['color', 'date', 'name', 'part', 'user_id']);
+    const calendar = await lucas('/api/team-leaves?month=2026-12&includeRest=1');
+    const plannedRest = calendar.filter(row => row.kind === 'rest');
+    assert.deepEqual(plannedRest.map(({ date, name }) => [date, name]), [[friday, 'Emma Laurent']]);
+    assert.deepEqual(Object.keys(plannedRest[0]).sort(), ['color', 'date', 'kind', 'name', 'user_id']);
+    await emma('/api/team-leaves?month=2026-13', { status: 400 });
+    assert.deepEqual(await emma('/api/team-leaves?month=2027-01'), []);
     for (const [snapshot, adjusted] of [[own, 1722], [other, 1575]]) {
       const { schedules, leaves, holidays } = snapshot.workTime;
       assert.equal(workCalendar(schedules, leaves, holidays, null).total(start_date, endOfWeek).adjusted, adjusted);
     }
     await emma(path, { method: 'DELETE', body: { version: 1 } });
     assert.deepEqual((await emma('/api/state')).workTime.leaves, []);
+    await admin('/api/holidays', { method: 'POST', body: { date: '2027-01-01', name: 'Nouvel An', kind: 'holiday' } });
+    await lucas('/api/leaves', { method: 'POST', body: period('2026-12-31', 'pm', '2027-01-04', 'am') });
+    assert.deepEqual((await emma('/api/team-leaves?month=2026-12')).map(({ date, part }) => [date, part]), [['2026-12-31', 'pm']]);
+    assert.deepEqual((await emma('/api/team-leaves?month=2027-01')).map(({ date, part }) => [date, part]), [['2027-01-04', 'am']]);
+    await emma('/api/work-schedule', { method: 'POST', body: { start_date: '2026-12-28', days: fiveDays, version: null } });
+    assert.deepEqual((await lucas('/api/team-leaves?month=2026-12&includeRest=1')).filter(row => row.kind === 'rest').map(row => row.date), [friday]);
+    assert.deepEqual((await lucas('/api/team-leaves?month=2027-01&includeRest=1')).filter(row => row.kind === 'rest'), []);
+    const saveBudget = (year, days, status = 200) => emma('/api/preferences', { method: 'PATCH', body: { leaveEntitlement: { year, days } }, status });
+    await saveBudget('2026', 20.5);
+    await saveBudget('2027', 21);
+    await saveBudget('2026', 20.1, 400);
+    const range = { date: thursday, end_date: friday, kind: 'closure', name: 'Fermeture de fin d’année' };
+    await lucas('/api/holidays', { method: 'POST', body: range, status: 403 });
+    const result = await admin('/api/holidays', { method: 'POST', body: range });
+    assert.equal(result.added, 1);
+    assert.equal(result.skipped, 1);
+    const updated = await emma('/api/state');
+    assert.deepEqual(updated.me.preferences.leaveEntitlements, { 2026: 20.5, 2027: 21 });
+    assert.equal((await lucas('/api/state')).me.preferences.leaveEntitlements, undefined);
+    assert.ok(updated.workTime.holidays.some(item => item.date === friday && item.kind === 'holiday'));
+    assert.deepEqual(workCalendar(updated.workTime.schedules, [], updated.workTime.holidays, null).annual('2026'), { leave: 0, closures: 1 });
   });
 }

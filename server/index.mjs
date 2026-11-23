@@ -10,15 +10,16 @@ import { randomBytes, createHash } from 'node:crypto';
 import { passwordHash, passwordMatches } from './store.mjs';
 import { openApplicationStore, seedApplicationDemo } from './async-store.mjs';
 import { AppError, fail, id, text, instant, report, midnight } from './domain.mjs';
-import { buildExport, validateExportConfig } from './exports.mjs';
+import { buildExport, omitTaskStatus, validateExportConfig } from './exports.mjs';
 import { csvExport, xlsxExport, pdfExport, exportFilename } from './export-files.mjs';
 import { previewCatalogDeletion, deleteCatalogItem } from './catalog-delete.mjs';
 import { PROJECT_COLORS } from '../public/project-colors.js';
 import { APP_VERSION } from '../public/release.js';
 import { requestContext } from './journal.mjs';
-import { changeHoliday, changeLeave, saveWorkSchedule, workTimeSnapshot } from './work-time.mjs';
+import { changeHoliday, changeLeave, saveWorkSchedule, teamLeaveMonth, workTimeSnapshot } from './work-time.mjs';
 const diagnosticPaths = new Set(['/health', '/api/info', '/api/setup', '/api/login', '/api/demo-login', '/api/state', '/api/events', '/api/logout', '/api/reports', '/api/exports/preview', '/api/exports/download', '/api/export-templates', '/api/account/password', '/api/clients', '/api/projects', '/api/tasks', '/api/timer/start', '/api/timer/stop', '/api/entries', '/api/preferences', '/api/users', '/api/journal', '/api/journal/verify']);
 function diagnosticRoute(path) {
+  if (path === '/api/team-leaves') return path;
   if (diagnosticPaths.has(path)) return path;
   if (['/api/work-schedule', '/api/leaves', '/api/holidays'].includes(path)) return path;
   if (/^\/api\/(leaves|holidays)\/[^/]+$/.test(path)) return path.replace(/\/[^/]+$/, '/:id');
@@ -234,10 +235,14 @@ export async function createApplication({
     const classification = await store.classification(user, data.task_id, data.project_id, previous);
     const start = instant(data.start, 'Début'),
       end = data.end === null ? null : instant(data.end, 'Fin');
-    if (start > Date.now() + 60000) fail(400, 'Le début ne peut pas être dans le futur.');
-    if (end !== null && (end < start || end === start && !(previous?.start === start && previous?.end === end) || end > Date.now() + 60000)) fail(400, 'La fin doit suivre le début et ne peut pas être dans le futur.');
+    const now = Date.now();
+    if (previous?.end === null) {
+      if (start > now + 60000) fail(400, 'Le début du chrono ne peut pas être dans le futur.');
+      if (end !== null && end > now + 60000) fail(400, 'La fin du chrono ne peut pas être dans le futur.');
+    }
+    if (end !== null && (end < start || end === start && !(previous?.start === start && previous?.end === end))) fail(400, 'La fin doit suivre le début.');
     const description = text(data.description ?? '', 'Description', 2000, false);
-    const overlaps = await store.overlaps(user, start, end ?? Date.now(), previous?.id);
+    const overlaps = await store.overlaps(user, start, end ?? now, previous?.id);
     if (overlaps.length && !data.confirmOverlap) fail(409, 'Ce créneau chevauche une autre de vos entrées. Vérifiez les horaires ou confirmez le chevauchement.', 'overlap', {
       count: overlaps.length
     });
@@ -391,6 +396,10 @@ export async function createApplication({
         } = await authenticated(req);
         context.actor = user.id;
         if (method !== 'GET' && req.headers['x-csrf-token'] !== session.csrf) fail(403, 'Session de formulaire expirée. Rechargez la page.', 'csrf');
+        if (path === '/api/team-leaves' && method === 'GET') {
+          return json(res, 200, await readAuthorized(req, user, session,
+            () => teamLeaveMonth(store, url.searchParams.get('month'), url.searchParams.get('includeRest') === '1')));
+        }
         if ((path === '/api/journal' || path === '/api/journal/verify') && method === 'GET') {
           const output = await readAuthorized(req, user, session, async () => {
             if (!['manager', 'admin'].includes(user.role)) fail(403, 'Le journal est réservé aux responsables.');
@@ -430,10 +439,14 @@ export async function createApplication({
           return json(res, 200, output);
         }
         if (path === '/api/state' && method === 'GET') return json(res, 200, {
-          ...(await readAuthorized(req, user, session, async () => ({
-            ...await store.snapshot(user),
-            workTime: await workTimeSnapshot(store, user.id)
-          }))),
+          ...(await readAuthorized(req, user, session, async () => {
+            const snapshot = await store.snapshot(user);
+            return {
+              ...snapshot,
+              exportTemplates: snapshot.exportTemplates.map(template => ({ ...template, config: omitTaskStatus(template.config) })),
+              workTime: await workTimeSnapshot(store, user.id)
+            };
+          })),
           csrf: session.csrf,
           demo: demo && localRequest(req),
           access: ['manager', 'admin'].includes(user.role) ? {
@@ -777,7 +790,7 @@ export async function createApplication({
               if (flags.pinned || flags.collapsed) settings[change.projectId] = flags;else delete settings[change.projectId];
               allowed.taskProjects = settings;
             }
-            if (['timer', 'tasks', 'projects', 'clients', 'reports', 'settings', 'unclassified'].includes(data.page)) allowed.page = data.page;
+            if (['timer', 'tasks', 'projects', 'clients', 'reports', 'settings', 'unclassified', 'leaves'].includes(data.page)) allowed.page = data.page;
             if (['list', 'calendar'].includes(data.timerView)) allowed.timerView = data.timerView;
             if (['mine', 'all'].includes(data.taskScope)) allowed.taskScope = data.taskScope;
             if (data.reportChart !== undefined) {
@@ -803,6 +816,14 @@ export async function createApplication({
             if (data.weeklyTargetMinutes !== undefined) {
               if (data.weeklyTargetMinutes !== null && (!Number.isInteger(data.weeklyTargetMinutes) || data.weeklyTargetMinutes < 0 || data.weeklyTargetMinutes > 10080)) fail(400, 'L’objectif hebdomadaire doit être compris entre 0 et 168 heures.');
               allowed.weeklyTargetMinutes = data.weeklyTargetMinutes;
+            }
+            if (data.leaveEntitlement !== undefined) {
+              const { year, days } = data.leaveEntitlement ?? {};
+              if (typeof year !== 'string' || !/^20\d{2}$/.test(year) ||
+                typeof days !== 'number' || !Number.isInteger(days * 2) || days < 0 || days > 366) {
+                fail(400, 'Indiquez une année valide et un droit de 0 à 366 jours, par demi-journée.');
+              }
+              allowed.leaveEntitlements = { ...previous.leaveEntitlements, [year]: days };
             }
             if (data.balanceStartDate !== undefined) {
               if (typeof data.balanceStartDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.balanceStartDate) || data.balanceStartDate < '2000-01-01' || data.balanceStartDate >= '2100-01-01') fail(400, 'Date de début du suivi invalide.');

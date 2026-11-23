@@ -688,6 +688,164 @@ input[type="checkbox"] {
 .work-day-mark.is-leave:hover {
   text-decoration: underline;
 }
+.team-leaves-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+}
+.team-leaves-toolbar select {
+  max-width: 100%;
+}
+.team-leaves-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 0 16px 10px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.team-leaves-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.team-leaves-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border-top: 1px solid var(--border);
+}
+.team-leaves-table th {
+  padding: 8px 5px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+.team-leaves-table td {
+  padding: 0;
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  vertical-align: top;
+}
+.team-leaves-table td:last-child {
+  border-right: 0;
+}
+.team-leaves-table .is-weekend {
+  background-color: color-mix(in srgb, var(--muted) 55%, var(--card));
+}
+.team-leaves-day, .team-leaves-outside {
+  display: flex;
+  width: 100%;
+  min-height: 94px;
+  padding: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  text-align: left;
+  font-size: 12px;
+}
+.team-leaves-day:hover {
+  background-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.team-leaves-day:focus-visible {
+  outline-offset: -2px;
+}
+.team-leaves-outside {
+  color: var(--muted-foreground);
+  opacity: .55;
+}
+.team-leaves-date {
+  display: grid;
+  place-items: center;
+  width: fit-content;
+  min-width: 22px;
+  height: 22px;
+}
+.team-leaves-day[aria-current="date"] .team-leaves-date {
+  border-radius: 5px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font-weight: 700;
+}
+.team-leaves-person, .team-leaves-holiday {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.team-leaves-person i, .team-leaves-holiday-dot, .team-leaves-symbol {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+.team-leaves-symbol {
+  background: var(--muted-foreground);
+}
+.team-leaves-person i.is-rest, .team-leaves-symbol.is-rest {
+  border: 1px solid var(--muted-foreground);
+  border-radius: 2px;
+  background: transparent;
+}
+.team-leaves-person[data-part="rest"] {
+  border: 1px dashed var(--border);
+  background: transparent;
+}
+.team-leaves-holiday-dot {
+  background: #756280;
+}
+.team-leaves-holiday-dot.is-closure, .team-leaves-symbol.is-closure {
+  border-radius: 2px;
+  background: #985a31;
+}
+.team-leaves-person-name, .team-leaves-holiday-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-leaves-person small, .team-leaves-more {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.team-leaves-person small {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.team-leaves-status:not(:empty) {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+@media (max-width: 767px) {
+  .team-leaves-day, .team-leaves-outside {
+    min-height: 65px;
+    gap: 3px;
+    padding: 4px;
+    align-items: center;
+    justify-content: flex-start;
+  }
+  .team-leaves-person, .team-leaves-holiday {
+    padding: 0;
+    background: transparent;
+  }
+  .team-leaves-person[data-part="rest"] { border: 0; }
+  .team-leaves-person[data-part="am"] i { clip-path: inset(0 50% 0 0); }
+  .team-leaves-person[data-part="pm"] i { clip-path: inset(0 0 0 50%); }
+  .team-leaves-person-name, .team-leaves-holiday-name, .team-leaves-person small {
+    display: none;
+  }
+}
 .work-schedule-grid {
   display: grid;
   grid-template-columns: minmax(64px, 1fr) minmax(68px, .8fr);

@@ -60,6 +60,12 @@ test('Exports : validation stricte et total cohérent dans CSV, Excel et PDF',as
   assert.throws(()=>buildExport(entries,lookups,{...c,columns:[]},manager,at),e=>e.status===400);
   assert.throws(()=>buildExport(entries,lookups,{...c,mode:'summary'},manager,at),e=>e.status===400);
   assert.throws(()=>buildExport(entries,lookups,{...c,groups:['evil']},manager,at),e=>e.status===400);
+  const oldConfig={...c,columns:[{key:'status',label:'Avancement'}],sort:{key:'status',direction:'asc'}};
+  const adapted=buildExport(entries,lookups,oldConfig,manager,at);
+  assert.deepEqual(adapted.config.columns,[{key:'duration',label:'Durée'}]);
+  assert.deepEqual(adapted.config.sort,{key:'start',direction:'asc'});
+  assert.equal(adapted.totalSeconds,23400);
+  assert.ok(adapted.rows.every(row=>!Object.hasOwn(row,'status')));
   const model=buildExport(entries,lookups,c,manager,at),csv=csvExport(model).toString('utf8');
   assert.ok(csv.startsWith('\uFEFF"Prestation";"Temps";"Heures"'));assert.ok(csv.includes('"\'=HYPERLINK'));assert.ok(csv.includes('6:30:00'));
   const xlsx=await xlsxExport(model),wb=new ExcelJS.Workbook();await wb.xlsx.load(xlsx);const sheet=wb.getWorksheet(1);
@@ -80,7 +86,12 @@ test('Exports HTTP : fichiers privés, CSRF, modèles versionnés et données sy
   let response=await req(alice,'/api/export-templates','POST',{name:'Relevé mensuel',config:c},key);assert.equal(response.status,200);const saved=(await response.json()).template;
   assert.deepEqual(saved.config.excluded,[]);assert.equal(saved.config.document.reference,'');
   response=await req(alice,'/api/export-templates','POST',{name:'Relevé mensuel',config:c},key);assert.equal((await response.json()).template.id,saved.id);
-  assert.equal((await (await req(same,'/api/state','GET')).json()).exportTemplates.length,1);
+  const oldConfig={...saved.config,columns:[...saved.config.columns,{key:'status',label:'Avancement'}],sort:{key:'status',direction:'desc'}};
+  await app.store.run('UPDATE export_templates SET config=? WHERE id=?',JSON.stringify(oldConfig),saved.id);
+  const { exportTemplates }=await (await req(same,'/api/state','GET')).json();
+  assert.equal(exportTemplates.length,1);
+  assert.deepEqual(exportTemplates[0].config.columns,saved.config.columns);
+  assert.deepEqual(exportTemplates[0].config.sort,{key:'start',direction:'desc'});
   assert.equal((await (await req(emma,'/api/state','GET')).json()).exportTemplates.length,0);
   assert.equal((await req(emma,'/api/export-templates/'+saved.id,'DELETE',{version:1})).status,404);
   assert.equal((await req(alice,'/api/export-templates/'+saved.id,'PATCH',{name:'Nouveau nom',config:c,version:1})).status,200);

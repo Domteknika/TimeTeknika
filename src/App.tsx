@@ -24,6 +24,7 @@ import {
   Loader2,
   WifiOff,
   FileDown,
+  CalendarDays,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp, useWorkspace, useNow } from "@/lib/app-context";
@@ -38,16 +39,20 @@ import type { Entry } from "@/lib/types";
 const loadReports = () => import("@/pages/reports-page").then(m => ({ default: m.ReportsPage }));
 const loadExports = () => import("@/pages/exports-page").then(m => ({ default: m.ExportsPage }));
 const loadSettings = () => import("@/pages/settings-page").then(m => ({ default: m.SettingsPage }));
+const loadLeaves = () => import("@/pages/leaves-page").then(m => ({ default: m.LeavesPage }));
 const ReportsPage = lazy(loadReports);
 const ExportsPage = lazy(loadExports);
 const SettingsPage = lazy(loadSettings);
+const LeavesPage = lazy(loadLeaves);
 function preloadPage(page: string) {
   if (page === "reports") void loadReports().catch(() => {});
   if (page === "exports") void loadExports().catch(() => {});
+  if (page === "leaves") void loadLeaves().catch(() => {});
 }
 const navigation = [
   ["timer", "Mon temps", Clock3],
   ["unclassified", "À classer", Inbox],
+  ["leaves", "Congés", CalendarDays],
   ["tasks", "Tâches", ListTodo],
   ["projects", "Projets", FolderOpen],
   ["clients", "Clients", UsersRound],
@@ -346,6 +351,8 @@ function Workspace() {
           >
             {page === "timer" || page === "unclassified" ? (
               <TimePage key={page} unclassified={page === "unclassified"} />
+            ) : page === "leaves" ? (
+              <LeavesPage />
             ) : page === "tasks" ||
               page === "projects" ||
               page === "clients" ? (

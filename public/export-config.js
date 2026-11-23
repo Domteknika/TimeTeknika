@@ -6,7 +6,7 @@ export const EXPORT_COLUMNS = [
   {key:'description',label:'Description',width:210,detail:true},
   {key:'duration',label:'Durée',width:80,metric:true}, {key:'decimal',label:'Heures décimales',width:85,metric:true},
   {key:'count',label:'Entrées',width:60,metric:true},
-  {key:'status',label:'Statut de la tâche',width:100,detail:true}, {key:'timer',label:'Chrono',width:90,detail:true}
+  {key:'timer',label:'Chrono',width:90,detail:true}
 ];
 export const EXPORT_GROUPS = ['client','project','task','person','day','week','month'];
 export const EXPORT_PERIODS = [['custom','Dates libres'],['week','Cette semaine'],['lastWeek','Semaine précédente'],['month','Ce mois'],['lastMonth','Mois précédent']];

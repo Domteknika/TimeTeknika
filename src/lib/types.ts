@@ -11,6 +11,7 @@ export interface Preferences {
   timerView?: "list" | "calendar";
   taskScope?: "mine" | "all";
   weeklyTargetMinutes?: number | null;
+  leaveEntitlements?: Record<string, number>;
   balanceStartDate?: string;
   reminderHour?: number;
   calendarDays?: number;
@@ -43,7 +44,6 @@ export interface Project extends Client {
 export interface Task extends Client {
   project_id: string;
   description: string;
-  status: "todo" | "doing" | "done";
   archived: number;
   assignees: string[];
 }
