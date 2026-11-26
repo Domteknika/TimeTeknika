@@ -42,13 +42,22 @@ test("Le menu du chrono permet de créer et sélectionner une tâche", async ({ 
   await expect(task).toContainText(taskName);
   await expect(description).toHaveValue("Activité suivante");
   const after = await snapshot();
-  expect(after.entries.find((entry: { id: string }) => entry.id === running.id)).toEqual(running);
+
   const created = after.tasks.find((item: { name: string }) => item.name === taskName);
   expect(created).toMatchObject({ project_id: project.id, assignees: [after.me.id] });
-  await page.getByRole("button", { name: "Basculer sur cette activité", exact: true }).click();
   await expect.poll(async () => (await snapshot()).entries.find((entry: { end: number | null }) => entry.end === null)?.task_id).toBe(created.id);
+  await expect(page.getByRole("button", { name: "Basculer sur cette activité" })).toHaveCount(0);
+  await description.fill("Dernière saisie avant arrêt");
   await stop.click();
   await expect(stop).toHaveCount(0);
+  await expect(task).toHaveText("Sans tâche · à classer");
+  await expect(projectChoice).toHaveText("Sans projet");
+  await expect(description).toHaveValue("");
+  const stopped = await snapshot();
+  expect(stopped.entries).toHaveLength(before.entries.length);
+  expect(stopped.entries.find((entry: { id: string }) => entry.id === running.id)).toMatchObject({
+    task_id: created.id, project_id: project.id, start: running.start, end: expect.any(Number), description: "Dernière saisie avant arrêt",
+  });
 });
 
 test.describe("Calendrier mobile", () => {
@@ -79,7 +88,7 @@ test.describe("Calendrier mobile", () => {
     await day.tap({ position: { x: 16, y: 80 } });
     const editor = page.getByRole("dialog", { name: "Ajouter du temps", exact: true });
     await expect(editor.getByLabel("Date de début", { exact: true })).toHaveValue(tomorrow);
-    await editor.getByRole("button", { name: "Annuler", exact: true }).tap();
+    await editor.getByRole("button", { name: "Fermer", exact: true }).tap();
     await page.getByRole("button", { name: "Aujourd’hui", exact: true }).tap();
     await expect(day).toHaveClass(/\btoday\b/);
     await page.setViewportSize({ width: 800, height: 360 });
@@ -155,7 +164,7 @@ test("React workspace: timer, catalog, exports, calendar, mobile and permissions
   await page
     .getByLabel("Description", { exact: true })
     .fill(marker + " modifié");
-  await page.getByRole("button", { name: "Enregistrer", exact: true }).click();
+  await page.getByRole("button", { name: "Fermer", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: marker + " modifié", exact: true }),

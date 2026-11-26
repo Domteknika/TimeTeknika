@@ -8,6 +8,20 @@ const {ORIGIN,PROFILES,sameOrigin,sessionCookie,registerProfile,taskKeys}=requir
 const snapshot=(entries=[])=>({me:{id:'me'},csrf:'csrf',entries});
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status});
 
+test('Bureau : interrogation légère et relecture du catalogue après changement de compte ou serveur ancien',async()=>{
+  const calls=[],states=[]; let legacy=false;
+  const client=new TimerClient({origin:ORIGIN,onState:s=>states.push(s),request:async url=>{
+    const path=new URL(url).pathname; calls.push(path);
+    if(path==='/api/state')return json(snapshot());
+    return legacy?json({},404):json({userId:'me',active:true});
+  }});
+  await client.status('me');
+  assert.deepEqual(calls,['/api/timer/status']);assert.deepEqual(states,['active']);
+  await client.status('previous');
+  legacy=true;await client.status('me');
+  assert.deepEqual(calls.slice(1),['/api/timer/status','/api/state','/api/timer/status','/api/state']);
+});
+
 test('Bureau : ne pilote que le chrono personnel, conserve la version et attend la confirmation',async()=>{
   const calls=[],states=[];
   const client=new TimerClient({origin:ORIGIN,onState:s=>states.push(s),request:async(url,options)=>{

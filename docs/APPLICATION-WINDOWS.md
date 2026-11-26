@@ -2,7 +2,7 @@
 
 ## Installer
 
-Lancer `TimeTeknika-Setup-1.1.0.exe`, choisir le dossier d’installation, puis ouvrir **TimeTeknika** depuis le Bureau ou le menu Démarrer. L’installation se fait pour l’utilisateur Windows courant, sans installation d’un serveur local.
+Lancer `TimeTeknika-Setup-1.1.1.exe`, choisir le dossier d’installation, puis ouvrir **TimeTeknika** depuis le Bureau ou le menu Démarrer. L’installation se fait pour l’utilisateur Windows courant, sans installation d’un serveur local.
 
 Se connecter avec son identifiant et son mot de passe habituels. L’application utilise directement **https://timeteknika.domteknika.ch**. Il n’y a rien à installer sur Linux et aucune base à copier. Le même installateur peut être distribué aux collègues sous Windows 10/11 x64.
 

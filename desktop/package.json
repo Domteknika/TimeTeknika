@@ -1,7 +1,7 @@
 {
   "name": "timeteknika-desktop",
   "productName": "TimeTeknika",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "TimeTeknika pour Windows — chrono et raccourcis globaux",
   "author": "Domteknika",

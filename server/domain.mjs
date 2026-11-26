@@ -38,7 +38,12 @@ export function midnight(date, zone = 'Europe/Zurich') {
   }
   fail(400, 'Limite de journée invalide.');
 }
-export function nextDate(date) { return new Date(Date.parse(`${date}T12:00:00Z`) + 86400000).toISOString().slice(0, 10); }
+export function nextDate(date) {
+  const day = new Date(date + 'T12:00:00Z');
+  if (!Number.isFinite(day.getTime()) || day.toISOString().slice(0, 10) !== date) fail(400, 'Date inexistante.');
+  return new Date(day.getTime() + 86400000).toISOString().slice(0, 10);
+}
+export const searchText = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('fr');
 export function report(entries, filters, lookups, now = Date.now()) {
   const { clients, projects, tasks, users } = lookups;
   const from = midnight(filters.from), to = midnight(nextDate(filters.to));
@@ -48,7 +53,7 @@ export function report(entries, filters, lookups, now = Date.now()) {
   const rows = entries.filter(e => !e.deleted).map(e => {
     const project = p.get(e.project_id), task = t.get(e.task_id), client = c.get(project?.client_id);
     return { ...e, project: project?.name ?? 'Sans projet', task: task?.name ?? 'À classer', client: client?.name ?? 'Sans client', client_id: client?.id ?? null, person: u.get(e.user_id)?.name ?? 'Ancien membre', seconds: seconds(e, now, from, to) };
-  }).filter(e => (e.seconds > 0 || e.start >= from && e.start < to && (e.end === e.start || e.end === null)) && (!filters.person || e.user_id === filters.person) && (!filters.client || e.client_id === filters.client) && (!filters.project || e.project_id === filters.project) && (!filters.task || e.task_id === filters.task) && (!filters.unclassified || !e.task_id) && (!filters.search || e.description.toLocaleLowerCase('fr').includes(filters.search.toLocaleLowerCase('fr'))));
+  }).filter(e => (e.seconds > 0 || e.start >= from && e.start < to && (e.end === e.start || e.end === null)) && (!filters.person || e.user_id === filters.person) && (!filters.client || e.client_id === filters.client) && (!filters.project || e.project_id === filters.project) && (!filters.task || e.task_id === filters.task) && (!filters.unclassified || !e.task_id) && (!filters.search || searchText(e.description).includes(searchText(filters.search))));
   const groups = new Map();
   const primary = ['project', 'task', 'client', 'person'].includes(filters.group) ? filters.group : 'project';
   for (const row of rows) {

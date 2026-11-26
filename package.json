@@ -24,7 +24,7 @@
     "db:verify": "node --env-file-if-exists=.env scripts/verify-journal.mjs --postgres",
     "test:db": "node --test tests/postgres-*.test.mjs",
     "test:ui": "pnpm build && playwright test",
-    "release": "pnpm check:public && pnpm build && node scripts/package-release.mjs",
+    "release": "pnpm check:public && pnpm typecheck && pnpm test && pnpm test:ui && node scripts/package-release.mjs",
     "check:public": "node scripts/check-public-repo.mjs"
   },
   "dependencies": {

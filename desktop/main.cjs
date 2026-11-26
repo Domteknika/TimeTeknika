@@ -57,7 +57,7 @@ async function restoreCookie(){
 async function syncState(){
   if(!client||client.busy||quitting)return;
   if(syncing)return syncing;
-  syncing=client.state().catch(error=>updateStatus(error.status===401?'signed-out':'unknown')).finally(()=>{syncing=null;});
+  syncing=client.status(accountState?.me.id).catch(error=>updateStatus(error.status===401?'signed-out':'unknown')).finally(()=>{syncing=null;});
   return syncing;
 }
 function toggle(){return timerCommand();}

@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Update the React interface on the existing PostgreSQL application.
+# Update React and its compatible HTTP API on the existing PostgreSQL application.
 # The previous image and the same database are retained for rollback.
 set -Eeuo pipefail
 umask 077
 root=/opt/timeteknika
-previous=2026.11.17-postgres-2
-version=2026.11.18-postgres-3
+version=2026.11.25-postgres-7
 [[ $EUID == 0 && $# == 1 ]] || { echo 'Utiliser sudo bash scripts/install-ui-update.sh DOSSIER_LIVRAISON.' >&2; exit 1; }
 # sudo has already authenticated through its controlling terminal. Docker's
 # interactive stdin must not retain that terminal while output is redirected.
@@ -25,7 +24,8 @@ stage="$state/release"
 mkdir -m 700 "$stage"
 compose=(docker compose --project-directory "$root" --project-name "$COMPOSE_PROJECT_NAME" --env-file "$root/.env" --env-file "$root/.env.postgres" -f "$root/compose.yaml" -f "$root/compose.override.yaml")
 health() { curl -fsS --max-time 5 http://127.0.0.1:4310/health | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["status"]=="ok"; print(r["version"])'; }
-[[ $(health) == "$previous" ]] || { echo 'Version source inattendue ; aucune mise à jour.' >&2; exit 1; }
+previous=$(health)
+[[ "$previous" == 2026.11.19-postgres-5 || "$previous" == 2026.11.23-postgres-6 ]] || { echo 'Version source inattendue ; aucune mise à jour.' >&2; exit 1; }
 container=$("${compose[@]}" ps -q teknika)
 [[ "$container" =~ ^[a-f0-9]{12,64}$ ]]
 metadata=$(docker inspect "$container" | python3 -c '
@@ -44,8 +44,7 @@ network=${metadata#*$'\n'}
 [[ "$old_image" =~ ^sha256:[a-f0-9]{64}$ ]]
 (cd "$root" && sha256sum --quiet -c scripts/release-files.sha256)
 
-# Copy a verified release privately. Reject any backend, dependency, migration
-# or other public-file change: this installer does not perform database upgrades.
+# Allow the reviewed API files. Dependencies and database migrations must match the installed release.
 python3 - "$source_stage" "$stage" "$root" "$version" <<'PY'
 import hashlib,json,os,pathlib,re,sys
 source,target,current=map(pathlib.Path,sys.argv[1:4])
@@ -55,7 +54,12 @@ roots={'Dockerfile','.dockerignore','package.json','pnpm-lock.yaml','tsconfig.js
 def allowed(name):
     return name in roots or (bool(re.fullmatch(r'(server|public|scripts|src|web-assets|drizzle|dist/web)/[a-zA-Z0-9_./-]+',name)) and all(p and not p.startswith('.') for p in name.split('/')))
 def protected(name):
-    return name in {'package.json','pnpm-lock.yaml','scripts/backup-postgres.sh','deploy/compose.postgres.yaml'} or name.startswith(('server/','drizzle/')) or (name.startswith('public/') and name!='public/release.js')
+    if name in {'server/index.mjs','server/domain.mjs','server/exports.mjs','server/store.mjs','server/async-store.mjs'}:
+        return False
+    return name in {'pnpm-lock.yaml','scripts/backup-postgres.sh','deploy/compose.postgres.yaml'} or name.startswith(('server/','drizzle/')) or (name.startswith('public/') and name!='public/release.js')
+def dependencies(root):
+    data=json.loads((root/'package.json').read_text()); data.pop('scripts',None); return data
+assert dependencies(source)==dependencies(current), 'Modification des dépendances refusée'
 assert new['version']==sys.argv[4] and new['frontend']=='react'
 assert {k:v for k,v in old['files'].items() if protected(k)}=={k:v for k,v in new['files'].items() if protected(k)}, 'Modification hors interface refusée'
 assert {'dist/web/index.html','public/release.js'}<=new['files'].keys()
@@ -112,9 +116,11 @@ cat > "$state/Dockerfile.ui" <<EOF
 FROM $base_tag
 USER root
 COPY --chown=node:node dist/web /app/dist/web
+COPY --chown=node:node server /app/server
+COPY --chown=node:node package.json /app/package.json
 COPY --chown=node:node public/release.js /app/public/release.js
 COPY --chown=node:node scripts /app/scripts
-RUN find /app/dist/web /app/scripts -type d -exec chmod 755 {} + && find /app/dist/web /app/scripts -type f -exec chmod 644 {} + && chmod 644 /app/public/release.js
+RUN find /app/dist/web /app/scripts /app/server -type d -exec chmod 755 {} + && find /app/dist/web /app/scripts /app/server -type f -exec chmod 644 {} + && chmod 644 /app/public/release.js
 USER node
 EOF
 echo 'Construction de l’interface, service actuel disponible…'
@@ -162,6 +168,9 @@ for attempt in {1..30}; do
   sleep 2
 done
 [[ $healthy == 1 ]]
+live=$("${compose[@]}" ps -q teknika)
+[[ "$live" =~ ^[a-f0-9]{12,64}$ ]]
+docker exec "$live" node scripts/verify-release.mjs http://127.0.0.1:4310 > "$state/application-check.log" 2>&1
 docker run --rm --init --network "$network" --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 0 \
   --env DATABASE_URL --mount "type=bind,src=$state,dst=/update,readonly" "$new_image" \
   node scripts/verify-journal.mjs --postgres /update/before-journal.json > "$state/after-journal.json"

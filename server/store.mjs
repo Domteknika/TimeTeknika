@@ -73,8 +73,7 @@ export function openStore(path) {
       ? all('SELECT * FROM entries WHERE deleted=? ORDER BY start DESC', +deleted)
       : all('SELECT * FROM entries WHERE user_id=? AND deleted=? ORDER BY start DESC', user.id, +deleted);
   }
-  function snapshot(user) {
-    const entries = visibleEntries(user);
+  function snapshot(user, entries = visibleEntries(user)) {
     return { ...lookups(), me: userPublic(user), entries, exportTemplates: all('SELECT id,name,config,version FROM export_templates WHERE user_id=? ORDER BY name',user.id).map(t=>({...t,config:JSON.parse(t.config)})), revision: revision(), serverNow: Date.now(), timezone: 'Europe/Zurich' };
   }
   function audit(user, entity, entityId, action, before, after, owner = null) {

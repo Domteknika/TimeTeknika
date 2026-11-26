@@ -24,6 +24,16 @@ class TimerClient {
     if(!response.ok)throw new ApiError(response.status===401?'Connectez-vous à TimeTeknika pour utiliser le raccourci.':result.message||'Action refusée par le serveur.',response.status);
     return result;
   }
+  async status(knownUser){
+    try {
+      const result=await this.call('/api/timer/status');
+      if(result.userId!==knownUser)return this.state();
+      this.onState(result.active?'active':'idle');
+    } catch(error) {
+      if(error.status===404)return this.state();
+      throw error;
+    }
+  }
   async state(){
     const state=await this.call('/api/state');
     if(!state.me?.id||!Array.isArray(state.entries)||!state.csrf)throw new ApiError('Version du serveur incompatible.');

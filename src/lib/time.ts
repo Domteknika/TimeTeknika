@@ -14,7 +14,8 @@ export function weekDays(offset = 0, now = Date.now()) {
   const monday = shiftDay(day, -((weekday + 6) % 7) + offset * 7);
   return Array.from({ length: 7 }, (_, i) => shiftDay(monday, i));
 }
-export const clockTime = (ms: number) => clockFormatter.format(ms);
+export const clockTime = (ms: number, seconds = false) =>
+  (seconds ? wallFormatter : clockFormatter).format(ms);
 export const prettyDay = (day: string, short = false) =>
   prettyFormatters[Number(short)].format(new Date(day + "T12:00:00Z"));
 export function duration(value: number, seconds = false) {

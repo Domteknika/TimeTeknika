@@ -1,3 +1,4 @@
+import { SaveStatus, useEntrySaves } from "@/components/entry-autosave";
 import { LiveDuration } from "@/components/live-duration";
 import { useState, useEffect, useRef, useMemo, useSyncExternalStore } from "react";
 import {
@@ -15,7 +16,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspace, useNow } from "@/lib/app-context";
-import type { Entry } from "@/lib/types";
+import type { Entry, Snapshot } from "@/lib/types";
+import { layoutCalendarDay } from "@/lib/calendar-layout";
 import { emptyWorkTime, workMinutesLabel } from "@/lib/work-time";
 import { weekday, workCalendar, type Leave } from "../../public/work-schedule.js";
 import { LeaveEditor, WorkDayMarks } from "@/components/work-time";
@@ -27,12 +29,10 @@ import {
   midnight,
   clockTime,
   duration,
-  elapsed,
 } from "@/lib/time";
 import {
   weeklyProgress,
   cumulativeProgress,
-  layoutCalendarEntries,
   calendarSelection,
   calendarWallTime,
   isoWeek,
@@ -66,13 +66,16 @@ export function EntryList({
   onEdit,
   onHistory,
   onContinue,
+  day,
 }: {
   entries: Entry[];
+  day?: string;
   onEdit: (entry: Entry) => void;
   onHistory: (entry: Entry) => void;
   onContinue?: (entry: Entry) => void;
 }) {
   const { state, mutate } = useWorkspace();
+  const from = day ? midnight(day) : -Infinity, to = day ? midnight(shiftDay(day, 1)) : Infinity;
   if (!entries.length)
     return (
       <Empty
@@ -121,8 +124,8 @@ export function EntryList({
               </div>
             </div>
             <span className="hidden text-xs text-muted-foreground sm:block">
-              {clockTime(e.start)} —{" "}
-              {e.end === null ? "en cours" : clockTime(e.end)}
+              {clockTime(Math.max(from, e.start))} —{" "}
+              {e.end === null && Date.now() < to ? "en cours" : clockTime(Math.min(e.end ?? Date.now(), to))}
             </span>
             <strong
               className={
@@ -130,10 +133,10 @@ export function EntryList({
                 (e.end === null ? "text-primary" : "")
               }
             >
-              <LiveDuration entry={e} />
+              <LiveDuration entry={{ ...e, start: Math.max(e.start, from), end: (e.end ?? Date.now()) >= to ? to : e.end }} />
             </strong>
             <div className="flex gap-0.5">
-              {own && onContinue && e.end !== null && (
+              {own && onContinue && resumable(e, state) && (
                 <Button
                   size="icon"
                   variant="ghost"
@@ -183,14 +186,14 @@ export function EntryList({
   );
 }
 export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
-  const { state, mutate, preference } = useWorkspace();
+  const { state, mutate, preference, requestWeek } = useWorkspace();
   const now = useNow();
   const mobile = useSyncExternalStore(subscribeToMobileViewport, isMobileViewport);
   const [view, setView] = useState(state.me.preferences.timerView ?? "list"),
     [offset, setOffset] = useState(0);
   const [calendarDay, setCalendarDay] = useState<string | null>(null);
-  const [description, setDescription] = useState("");
-  const [selection, setSelection] = useState({ task: "", project: "", runningId: "" });
+  const [idle, setIdle] = useState({ description: "", task: "", project: "" });
+  const saves = useEntrySaves();
   const [createTask, setCreateTask] = useState(false);
   const [leaveEdit, setLeaveEdit] = useState<{ date: string; entry?: Leave } | null>(null);
   const [busy, setBusy] = useState(false),
@@ -206,11 +209,20 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
     running = own.find((e) => e.end === null);
   const runningTaskId = running?.task_id ?? "";
   const runningProjectId = running?.project_id ?? "";
-  const { task, project } = running && selection.runningId !== running.id
-    ? { task: runningTaskId, project: runningProjectId }
-    : selection;
-  const selectClassification = (task: string, project: string) =>
-    setSelection({ task, project, runningId: running?.id ?? "" });
+  const draftKey = running ? saves.keyFor(running) : "";
+  const values = running ? saves.values(draftKey, running) : undefined;
+  const description = values?.description ?? idle.description;
+  const task = values ? values.task_id ?? "" : idle.task;
+  const project = values ? values.project_id ?? "" : idle.project;
+  const selectClassification = (task: string, project: string) => {
+    if (running) saves.edit(draftKey, running, { task_id: task || null, project_id: project || null });
+    else setIdle(previous => ({ ...previous, task, project }));
+  };
+  const previousTimer = useRef(running?.id);
+  useEffect(() => {
+    if (previousTimer.current !== running?.id) setIdle({ description: "", task: "", project: "" });
+    previousTimer.current = running?.id;
+  }, [running?.id]);
   const runningClassification = [
     runningTaskId && state.tasks.find((item) => item.id === runningTaskId)?.name,
     runningProjectId && state.projects.find((item) => item.id === runningProjectId)?.name,
@@ -228,6 +240,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
   const weekStart = current[0];
   const weekEnd = shiftDay(weekStart, 7);
   const viewedWeekStart = shiftDay(days[0], -weekday(days[0]));
+  useEffect(() => { requestWeek(viewedWeekStart); }, [viewedWeekStart, requestWeek]);
   const balanceStart = prefs.balanceStartDate ?? weekStart;
   const targets = useMemo(() => ({
     week: calendar.total(weekStart, weekEnd),
@@ -249,7 +262,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
     targets.week.adjusted,
     now,
   ), [own, weekStart, weekEnd, targets.week.adjusted, now]);
-  const balance = useMemo(() => cumulativeProgress(
+  const partialBalance = useMemo(() => cumulativeProgress(
     own,
     midnight(balanceStart),
     midnight(weekEnd),
@@ -257,7 +270,7 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
     now,
     targets.balance.adjusted,
   ), [own, balanceStart, weekEnd, prefs.weeklyTargetMinutes, targets.balance.adjusted, now]);
-  const previous = useMemo(() => cumulativeProgress(
+  const partialPrevious = useMemo(() => cumulativeProgress(
     own,
     midnight(balanceStart),
     midnight(weekStart),
@@ -265,6 +278,13 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
     now,
     targets.previous.adjusted,
   ), [own, balanceStart, weekStart, prefs.weeklyTargetMinutes, targets.previous.adjusted, now]);
+  const includeHistory = (summary: typeof partialBalance) => {
+    const seconds = summary.seconds + (state.entryWindow?.omittedSeconds ?? 0);
+    const target = summary.target;
+    const balance = target === null ? null : seconds - target;
+    return { ...summary, seconds, balance };
+  };
+  const balance = includeHistory(partialBalance), previous = includeHistory(partialPrevious);
   const rangeStart = midnight(days[0]);
   const rangeEnd = midnight(shiftDay(days[days.length - 1], 1));
   const visible = useMemo(() => own.filter((e) =>
@@ -274,10 +294,20 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
   ), [own, unclassified, rangeStart, rangeEnd, now]);
   const groups = (() => {
     const byDay = new Map<string, Entry[]>();
-    for (const entry of visible) {
-      const day = dayKey(entry.start);
-      const items = byDay.get(day) ?? [];
-      items.push(entry); byDay.set(day, items);
+    if (unclassified) {
+      for (const entry of visible) {
+        const lastDay = dayKey(Math.max(entry.start, (entry.end ?? now) - 1));
+        for (let day = dayKey(entry.start); day <= lastDay; day = shiftDay(day, 1)) {
+          const items = byDay.get(day) ?? [];
+          items.push(entry); byDay.set(day, items);
+        }
+      }
+    } else if (!showCalendar) {
+      for (const day of days) {
+        const from = midnight(day), to = midnight(shiftDay(day, 1));
+        const items = visible.filter(e => inPeriod(e, from, to, now));
+        if (items.length) byDay.set(day, items);
+      }
     }
     if (!unclassified && !showCalendar) {
       for (const day of days) {
@@ -290,9 +320,15 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
   const editLeave = (entry: Leave) => setLeaveEdit({ date: entry.start_date, entry });
   async function start(from?: Entry) {
     if (busy) return;
+    if (from && running && (from.task_id ? from.task_id === running.task_id :
+      !running.task_id && from.project_id === running.project_id && from.description === running.description)) {
+      toast.info("Le chrono de cette tâche est déjà en cours.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
+      const saved = running ? await saves.flush(draftKey) : undefined;
       await mutate(
         "/api/timer/start",
         "POST",
@@ -301,11 +337,11 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
           project_id: from ? from.project_id : project || null,
           description: from?.description ?? description,
           expectedRunningId: running?.id ?? null,
-          expectedVersion: running?.version,
+          expectedVersion: running ? Math.max(saved?.version ?? 0, running.version) : undefined,
         },
         "Chrono démarré.",
       );
-      if (!from) setDescription("");
+      setIdle({ description: "", task: "", project: "" });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -317,10 +353,11 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
     setBusy(true);
     setError("");
     try {
+      const saved = await saves.flush(draftKey);
       await mutate(
         "/api/timer/stop",
         "POST",
-        { id: running.id, version: running.version },
+        { id: running.id, version: Math.max(saved?.version ?? 0, running.version) },
         "Chrono arrêté.",
       );
     } catch (e) {
@@ -433,16 +470,20 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
             aria-label="Description du chrono"
             placeholder="Sur quoi travaillez-vous ?"
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            disabled={busy}
+            onChange={(e) => running ? saves.edit(draftKey, running, { description: e.target.value }, 500)
+              : setIdle({ ...idle, description: e.target.value })}
             maxLength={2000}
             className="border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0"
           />
           <Classification
+            disabled={busy}
             taskId={task}
             projectId={project}
             onCreateTask={() => setCreateTask(true)}
             onChange={selectClassification}
           />
+          {running && <SaveStatus draftKey={draftKey} entry={running} />}
         </div>
         <div className="timer-actions">
           <div>
@@ -477,15 +518,6 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
             <Button size="lg" disabled={busy} onClick={() => void start()}>
               <Play className="fill-current" />
               Démarrer
-            </Button>
-          )}
-          {running && (description || task !== runningTaskId || project !== runningProjectId) && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => void start()}
-            >
-              Basculer sur cette activité
             </Button>
           )}
         </div>
@@ -567,6 +599,8 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
           calendar={calendar}
           onEditLeave={editLeave}
           onEdit={(entry) => setEdit({ entry })}
+          onContinue={(entry) => void start(entry)}
+          timerBusy={busy}
           onCreate={(initialStart, initialEnd) =>
             setEdit({ initialStart, initialEnd })
           }
@@ -596,12 +630,13 @@ export function TimePage({ unclassified = false }: { unclassified?: boolean }) {
                     </div>
                     <span>
                       {duration(
-                        entries.reduce((n, e) => n + elapsed(e, now), 0),
+                        weeklyProgress(entries, midnight(d), midnight(shiftDay(d, 1)), null, now).seconds,
                       )}
                     </span>
                   </div>
                   {entries.length > 0 && <EntryList
                     entries={entries}
+                    day={d}
                     onEdit={(entry) => setEdit({ entry })}
                     onHistory={setHistory}
                     onContinue={(entry) => void start(entry)}
@@ -659,6 +694,8 @@ function TimeCalendar({
   calendar,
   onEditLeave,
   onEdit,
+  onContinue,
+  timerBusy,
   onCreate,
 }: {
   entries: Entry[];
@@ -667,11 +704,13 @@ function TimeCalendar({
   calendar: ReturnType<typeof workCalendar>;
   onEditLeave: (leave: Leave) => void;
   onEdit: (entry: Entry) => void;
+  onContinue: (entry: Entry) => void;
+  timerBusy: boolean;
   onCreate: (start: string, end: string) => void;
 }) {
   const { state, preference } = useWorkspace(),
     prefs = state.me.preferences;
-  const now = useNow();
+  const now = useNow(entries.some(e => e.end === null) ? 1000 : 60000);
   const container = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(620);
   const [headerHeight, setHeaderHeight] = useState(62);
@@ -703,9 +742,25 @@ function TimeCalendar({
   const save = (data: Parameters<typeof preference>[0]) =>
     void preference(data).catch((e) => toast.error(e.message));
   const hour = (ms: number) => {
-    const [h, m] = clockTime(ms).split(":").map(Number);
-    return h + m / 60;
+    const [h, m, s] = clockTime(ms, true).split(":").map(Number);
+    return h + m / 60 + s / 3600;
   };
+  const columns = shown.map((day) => {
+    const from = midnight(day);
+    const to = midnight(shiftDay(day, 1));
+    const segments = entries.filter((entry) => inPeriod(entry, from, to, now))
+      .map((entry) => ({
+        ...entry,
+        key: `${entry.id}:${day}`,
+        topHour: entry.start <= from ? 0 : hour(entry.start),
+        endHour: (entry.end ?? now) >= to ? 24 : hour(entry.end ?? now),
+      }));
+    return {
+      day,
+      total: weeklyProgress(entries, from, to, null, now).seconds,
+      ...layoutCalendarDay(segments, scale, min, max, daily ? 18 : 14),
+    };
+  });
   const minute = (event: React.PointerEvent<HTMLElement>) =>
     min * 60 +
     ((event.clientY - event.currentTarget.getBoundingClientRect().top) /
@@ -716,8 +771,8 @@ function TimeCalendar({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3">
         <p className="text-xs text-muted-foreground">
           {daily
-            ? "Touchez un créneau pour ajouter un temps."
-            : "Glissez sur une journée pour ajouter un temps."}
+            ? "Touchez un bloc pour le modifier, ▶ pour relancer, ou une zone libre pour ajouter du temps."
+            : "Cliquez sur un bloc pour le modifier, sur ▶ pour relancer. Glissez sur une zone libre pour ajouter du temps."}
         </p>
         <div className="flex flex-wrap gap-2">
           {!daily && (
@@ -774,23 +829,13 @@ function TimeCalendar({
           }}
         >
           <div className="calendar-corner" />
-          {shown.map((day) => {
-            const from = midnight(day),
-              to = midnight(shiftDay(day, 1)),
-              total = weeklyProgress(entries, from, to, null, now).seconds;
-            return (
-              <div
-                key={day}
-                className={
-                  "calendar-day-head " + (day === today ? "today" : "")
-                }
-              >
-                <b>{daily ? "Temps saisi" : prettyDay(day, true)}</b>
-                <span>{duration(total)}</span>
-                <WorkDayMarks info={calendar.details(day)} onEdit={onEditLeave} />
-              </div>
-            );
-          })}
+          {columns.map(({ day, total }) => (
+            <div key={day} className={"calendar-day-head" + (day === today ? " today" : "")}>
+              <b>{daily ? "Temps saisi" : prettyDay(day, true)}</b>
+              <span className="calendar-day-total">{duration(total)}</span>
+              <WorkDayMarks info={calendar.details(day)} onEdit={onEditLeave} />
+            </div>
+          ))}
           <div
             className="calendar-hours"
             style={{ height: (max - min) * scale }}
@@ -801,29 +846,7 @@ function TimeCalendar({
               </span>
             ))}
           </div>
-          {shown.map((day) => {
-            const from = midnight(day),
-              to = midnight(shiftDay(day, 1));
-            const segments = layoutCalendarEntries(
-              entries
-                .filter((e) => e.start < to && (e.end ?? now) >= from)
-                .map((e) => ({
-                  ...e,
-                  key: e.id + ":" + day,
-                  topHour: e.start <= from ? 0 : hour(e.start),
-                  endHour: (e.end ?? now) >= to ? 24 : hour(e.end ?? now),
-                })),
-              scale,
-              min,
-              max,
-            ) as (Entry & {
-              key: string;
-              top: number;
-              height: number;
-              column: number;
-              columns: number;
-              span: number;
-            })[];
+          {columns.map(({ day, blocks, markers }) => {
             const selected =
               drag?.day === day
                 ? calendarSelection(
@@ -844,7 +867,7 @@ function TimeCalendar({
                 onPointerDown={(e) => {
                   if (
                     e.button !== 0 ||
-                    (e.target as HTMLElement).closest("button")
+                    (e.target as Element).closest("button")
                   )
                     return;
                   e.currentTarget.setPointerCapture(e.pointerId);
@@ -871,38 +894,67 @@ function TimeCalendar({
                   );
                 }}
               >
-                {segments.map((e) => {
-                  const project = state.projects.find(
-                    (p) => p.id === e.project_id,
-                  );
+                {markers.map((entry) => {
+                  const { color, editLabel } = calendarActivity(entry, state, now, day, true);
                   return (
                     <button
-                      key={e.key}
-                      className={
-                        "calendar-entry " + (e.end === null ? "active" : "")
-                      }
+                      key={entry.key}
+                      type="button"
+                      className="calendar-short-mark"
                       style={{
-                        top: e.top,
-                        height: e.height,
-                        left:
-                          "calc(" + (e.column * 100) / e.columns + "% + 3px)",
-                        width:
-                          "calc(" + (e.span * 100) / e.columns + "% - 6px)",
-                        background: `color-mix(in srgb, ${project?.color ?? "#aaa"} 16%, white)`,
-                        borderColor: project?.color ?? "#aaa",
+                        top: entry.top,
+                        height: entry.height,
+                        left: `calc(${(entry.column * 100) / entry.columns}% + 1px)`,
+                        width: `max(1px, ${(entry.span * 100) / entry.columns}% - 2px)`,
+                        backgroundColor: color,
                       }}
-                      title={e.description + " · " + duration(elapsed(e, now))}
-                      onClick={() => onEdit(e)}
+                      title={editLabel}
+                      aria-label={editLabel}
+                      onClick={() => onEdit(entry)}
+                    />
+                  );
+                })}
+                {blocks.map((entry) => {
+                  const { color, label, timing, resumeLabel, editLabel } = calendarActivity(entry, state, now, day);
+                  return (
+                    <div
+                      key={entry.key}
+                      className={"calendar-block" + (entry.end === null ? " active" : "")}
+                      style={{
+                        top: entry.top,
+                        height: entry.height,
+                        left: `calc(${(entry.column * 100) / entry.columns}% + 3px)`,
+                        width: `calc(${(entry.span * 100) / entry.columns}% - 6px)`,
+                        background: `color-mix(in srgb, ${color} 16%, white)`,
+                        borderColor: color,
+                      }}
                     >
-                      <b>
-                        {e.description ||
-                          state.tasks.find((t) => t.id === e.task_id)?.name ||
-                          "Sans description"}
-                      </b>
-                      <span>
-                        {clockTime(e.start)} · {duration(elapsed(e, now))}
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        className={"calendar-entry" + (resumeLabel ? " can-resume" : "")}
+                        title={editLabel}
+                        aria-label={editLabel}
+                        onClick={() => onEdit(entry)}
+                      >
+                        <b>{label}</b>
+                        {entry.description && <small className="block truncate">{entry.description}</small>}
+                        <span className="calendar-entry-time">{timing}</span>
+                      </button>
+                      {resumeLabel && (
+                        <button
+                          type="button"
+                          className="calendar-entry-resume"
+                          title="Relancer le chrono"
+                          aria-label={resumeLabel}
+                          disabled={timerBusy}
+                          onClick={() => onContinue(entry)}
+                        >
+                          <span className="calendar-entry-resume-icon">
+                            <Play aria-hidden="true" size={11} />
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
                 {selected && (
@@ -927,4 +979,42 @@ function TimeCalendar({
       </div>
     </Card>
   );
+}
+
+function shortDuration(seconds: number) {
+  const total = Math.floor(seconds);
+  if (total >= 3600) return duration(total, true);
+  const minutes = Math.floor(total / 60);
+  const remainder = total % 60;
+  if (!minutes) return `${remainder} s`;
+  return `${minutes} min${remainder ? ` ${remainder} s` : ""}`;
+}
+
+function inPeriod(entry: Entry, from: number, to: number, now: number) {
+  return entry.start < to && ((entry.end ?? now) > from || entry.start === from);
+}
+function resumable(entry: Entry, state: Snapshot) {
+  if (entry.end === null || entry.user_id !== state.me.id) return false;
+  const project = state.projects.find(p => p.id === entry.project_id);
+  const task = state.tasks.find(t => t.id === entry.task_id);
+  return (!entry.project_id || (project && !project.archived)) &&
+    (!entry.task_id || (task && !task.archived && task.assignees.includes(state.me.id) && task.project_id === entry.project_id));
+}
+function calendarActivity(entry: Entry, state: Snapshot, now: number, day: string, showSeconds = false) {
+  const task = state.tasks.find((item) => item.id === entry.task_id);
+  const project = state.projects.find((item) => item.id === (entry.project_id ?? task?.project_id));
+  const canContinue = resumable(entry, state);
+  const classification = [task?.name || "À classer", project?.name].filter(Boolean).join(" · ");
+  const label = entry.description ? entry.description + " · " + classification : classification;
+  const start = Math.max(entry.start, midnight(day));
+  const end = Math.min(entry.end ?? now, midnight(shiftDay(day, 1)));
+  const seconds = Math.max(0, (end - start) / 1000);
+  const startTime = clockTime(start, showSeconds);
+  const elapsedTime = showSeconds ? shortDuration(seconds) : duration(seconds);
+  const timing = `${startTime} · ${elapsedTime}`;
+  return {
+    color: project?.color ?? "#aaa", label: classification, timing,
+    resumeLabel: canContinue ? `Relancer le chrono · ${label} · ${timing}` : undefined,
+    editLabel: `${entry.end === null ? "Modifier le chrono en cours" : "Modifier ce temps"} · ${label} · ${timing}`,
+  };
 }

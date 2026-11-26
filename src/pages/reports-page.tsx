@@ -24,7 +24,7 @@ import {
 import { toast } from "sonner";
 import { useWorkspace } from "@/lib/app-context";
 import { api } from "@/lib/api";
-import type { Report, Preferences } from "@/lib/types";
+import type { Report, Preferences, ExportConfig } from "@/lib/types";
 import { weekDays, duration, prettyDay } from "@/lib/time";
 import { reportBreakdown, reportSeries } from "../../public/report-charts.js";
 import { Button } from "@/components/ui/button";
@@ -46,7 +46,9 @@ import {
   ErrorMessage,
   Empty,
 } from "@/components/shared";
-export function ReportsPage({ onExport }: { onExport: () => void }) {
+import { isoWeek } from "../../public/calendar-utils.js";
+import { defaultExportConfig } from "../../public/export-config.js";
+export function ReportsPage({ onExport }: { onExport: (config: ExportConfig) => void }) {
   const { state, preference } = useWorkspace();
   const week = weekDays();
   const [filters, setFilters] = useState({
@@ -68,9 +70,10 @@ export function ReportsPage({ onExport }: { onExport: () => void }) {
     [loading, setLoading] = useState(true),
     [tick, setTick] = useState(0);
   useEffect(() => {
+    if (!report?.rows.some(e => e.end === null)) return;
     const timer = setInterval(() => setTick((v) => v + 1), 15000);
     return () => clearInterval(timer);
-  }, []);
+  }, [!!report?.rows.some(e => e.end === null)]);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -91,7 +94,7 @@ export function ReportsPage({ onExport }: { onExport: () => void }) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [filters, state.revision, tick]);
+  }, [filters, state.reportRevision, tick]);
   const update = (key: string, value: string | boolean) =>
     setFilters((f) => ({
       ...f,
@@ -131,6 +134,18 @@ export function ReportsPage({ onExport }: { onExport: () => void }) {
     setChart(v);
     void preference({ reportChart: v }).catch((e) => toast.error(e.message));
   };
+  const firstWeek = isoWeek(filters.from), lastWeek = isoWeek(filters.to);
+  const iso = filters.from <= filters.to && firstWeek.year === lastWeek.year &&
+    firstWeek.number === lastWeek.number ? firstWeek : null;
+  function exportReport() {
+    const config = defaultExportConfig(filters.from, filters.to) as ExportConfig;
+    config.filters = {
+      people: filters.person ? [filters.person] : null, clients: filters.client ? [filters.client] : null,
+      projects: filters.project ? [filters.project] : null, tasks: filters.task ? [filters.task] : null,
+      query: filters.search, classification: filters.unclassified ? "unclassified" : "all", timers: "all",
+    };
+    onExport(config);
+  }
   const tooltip = (value: unknown) => duration(Number(value));
   return (
     <>
@@ -138,12 +153,13 @@ export function ReportsPage({ onExport }: { onExport: () => void }) {
         title="Le recul pour mieux avancer."
         description="Comprenez où va votre temps, par projet et par personne."
       >
-        <Button variant="outline" onClick={onExport}>
+        <Button variant="outline" disabled={!!error || loading} onClick={exportReport}>
           <Download />
           Exporter les temps
         </Button>
       </PageHeading>
       <Card className="p-5">
+        {iso && <h2 className="font-semibold">Semaine {iso.number} · {iso.year}</h2>}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Field label="Du">
             <Input

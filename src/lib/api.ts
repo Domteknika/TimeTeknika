@@ -16,7 +16,7 @@ export async function api<T>(
   path: string,
   method = "GET",
   data?: unknown,
-  key = crypto.randomUUID(),
+  key: string = crypto.randomUUID(),
   signal?: AbortSignal,
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };

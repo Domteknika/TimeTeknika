@@ -25,6 +25,10 @@ app.whenReady().then(async()=>{
     assert.equal(url.origin,ORIGIN);
     const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json'}});
     if(url.pathname==='/')return new Response('<!doctype html><title>TimeTeknika native test</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"><p>Fixture de test</p>',{headers:{'Content-Type':'text/html'}});
+    if(url.pathname==='/api/timer/status'){
+      return request.headers.get('cookie')?.includes('teknika_session=')
+        ? json({userId:'fixture',active:!!active}) : json({message:'Login required'},401);
+    }
     if(url.pathname==='/api/state'){
       cookiesSeen=!!request.headers.get('cookie')?.includes('teknika_session=');
       return cookiesSeen?json({me:{id:'fixture',name:'Test Windows'},csrf:'fixture-csrf',entries:active?[active]:[],tasks:[{id:'t1',name:'Admin',project_id:'p1',assignees:['fixture']},{id:'t2',name:'Étude',project_id:'p1',assignees:['fixture']}],projects:[{id:'p1',name:'Projet test',color:'#729fd0'}],clients:[]}):json({message:'Login required'},401);

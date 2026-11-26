@@ -86,6 +86,8 @@ export interface ExportConfig {
   };
 }
 export interface Snapshot {
+  entryWindow?: { from: number; to: number; current: number; next: number; omittedSeconds: number };
+  recentTasks?: { id: string; start: number }[];
   me: Person;
   users: Person[];
   clients: Client[];
@@ -95,6 +97,7 @@ export interface Snapshot {
   csrf: string;
   serverNow: number;
   revision: number;
+  reportRevision?: number;
   demo: boolean;
   timezone: string;
   workTime?: WorkTime;

@@ -106,10 +106,10 @@ export async function openPostgresStore(options) {
   store.visibleEntries = async (user, deleted = false) => ['manager', 'admin'].includes(await store.effectiveRole(user))
     ? all('SELECT * FROM entries WHERE deleted=? ORDER BY start DESC', !!deleted)
     : all('SELECT * FROM entries WHERE user_id=? AND deleted=? ORDER BY start DESC', user.id, !!deleted);
-  store.snapshot = user => store.readTransaction(async () => {
+  store.snapshot = (user, entries) => store.readTransaction(async () => {
     const current = await one('SELECT * FROM users WHERE id=? AND active=true', user.id);
     if (!current) fail(401, 'Connectez-vous pour continuer.', 'unauthorized');
-    return { ...await store.lookups(), me: await store.userPublic(current), entries: await store.visibleEntries(current),
+    return { ...await store.lookups(), me: await store.userPublic(current), entries: entries ?? await store.visibleEntries(current),
       exportTemplates: (await all('SELECT id,name,config,version FROM export_templates WHERE user_id=? ORDER BY name', current.id)).map(t => ({ ...t, config: JSON.parse(t.config) })),
       revision: await store.revision(), serverNow: Date.now(), timezone: 'Europe/Zurich' };
   });

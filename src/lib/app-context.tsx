@@ -9,8 +9,9 @@ import {
   type RefObject,
 } from "react";
 import { toast } from "sonner";
+import { weekDays } from "./time";
 import { api, ApiError, setCsrf } from "./api";
-import type { Snapshot, Info, Preferences } from "./types";
+import type { Snapshot, Info, Preferences, Entry } from "./types";
 type Context = {
   state: Snapshot | null;
   info: Info | null;
@@ -19,6 +20,7 @@ type Context = {
   connected: boolean;
   clockOffset: RefObject<number>;
   refresh: () => Promise<void>;
+  requestWeek: (monday: string | null) => void;
   login: (path: string, data: unknown) => Promise<void>;
   logout: () => Promise<void>;
   mutate: <T = Record<string, unknown>>(
@@ -26,6 +28,7 @@ type Context = {
     method: string,
     data: unknown,
     message?: string,
+    key?: string,
   ) => Promise<T>;
   preference: (
     data:
@@ -39,6 +42,12 @@ type Context = {
         },
   ) => Promise<void>;
 };
+function visibleInSnapshot(entry: Entry, snapshot: Snapshot) {
+  const window = snapshot.entryWindow;
+  if (!window) return entry.user_id === snapshot.me.id || snapshot.me.role !== "member";
+  return entry.user_id === snapshot.me.id && (entry.end === null || !entry.task_id ||
+    (entry.start < window.to && entry.end >= window.from) || (entry.start < window.next && entry.end >= window.current));
+}
 const AppContext = createContext<Context | null>(null);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<Snapshot | null>(null),
@@ -50,8 +59,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
     epoch = useRef(0);
   const refreshing = useRef<Promise<void> | null>(null),
     again = useRef(false);
+  const requestedWeek = useRef<string | null>(weekDays()[0]);
+  const currentState = useRef(state);
+  currentState.current = state;
+  const reloadWindow = useRef<() => void>(() => {});
+  const fullRevision = useRef(-1);
+  const changes = useRef(new Map<string, { entry: Entry; revision: number }>());
+  const applyEntry = useCallback((update: { entry: Entry; revision: number }) => {
+    const old = changes.current.get(update.entry.id);
+    if (update.revision <= fullRevision.current || (old && old.revision >= update.revision)) return;
+    const snapshot = currentState.current;
+    if (!snapshot) return;
+    const window = snapshot.entryWindow;
+    changes.current.set(update.entry.id, update);
+    if (window && update.entry.user_id !== snapshot.me.id) {
+      setState(previous => previous && { ...previous, reportRevision: Math.max(previous.reportRevision ?? 0, update.revision), revision: Math.max(previous.revision, update.revision) });
+      return;
+    }
+    // Moves into/out of archived weeks can change the balance outside our window.
+    if (window && (!visibleInSnapshot(update.entry, snapshot) || (update.entry.version > 1 &&
+      !snapshot.entries.some(e => e.id === update.entry.id)))) reloadWindow.current();
+    setState(previous => {
+      if (!previous) return previous;
+      const entries = previous.entries.filter(e => e.id !== update.entry.id);
+      if (!update.entry.deleted && visibleInSnapshot(update.entry, previous)) entries.push(update.entry);
+      entries.sort((a,b) => b.start - a.start);
+      return { ...previous, entries, reportRevision: Math.max(previous.reportRevision ?? 0, update.revision), revision: Math.max(previous.revision, update.revision) };
+    });
+  }, []);
   const clear = useCallback(() => {
+    requestedWeek.current = weekDays()[0];
     epoch.current++;
+    fullRevision.current = -1;
+    changes.current.clear();
     setCsrf("");
     setState(null);
     setConnected(false);
@@ -65,17 +105,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
       do {
         again.current = false;
         const generation = epoch.current;
-        const latest = await api<Snapshot>("/api/state");
+        const week = requestedWeek.current;
+        const latest = await api<Snapshot>("/api/state" + (week ? "?week=" + encodeURIComponent(week) : ""));
+        if (week !== requestedWeek.current) { again.current = true; continue; }
         if (generation !== epoch.current) return;
+        if (currentState.current && latest.me.id !== currentState.current.me.id) {
+          epoch.current++;
+          fullRevision.current = -1;
+          changes.current.clear();
+        }
         setCsrf(latest.csrf);
         offset.current = latest.serverNow - Date.now();
-        setState((previous) =>
-          !previous ||
-          previous.me.id !== latest.me.id ||
-          latest.revision >= previous.revision
-            ? latest
-            : previous,
-        );
+        if (latest.revision >= fullRevision.current) {
+          fullRevision.current = latest.revision;
+          const entries = new Map(latest.entries.map(e => [e.id, e]));
+          for (const [id, update] of changes.current) {
+            if (update.revision <= latest.revision) changes.current.delete(id);
+            else if (update.entry.deleted) entries.delete(id);
+            else if (visibleInSnapshot(update.entry, latest)) entries.set(id, update.entry);
+            else entries.delete(id);
+          }
+          const deltas = Array.from(changes.current.values(), change => change.revision);
+          setState({ ...latest, revision: Math.max(latest.revision, ...deltas),
+            reportRevision: Math.max(latest.reportRevision ?? latest.revision, ...deltas),
+            entries: [...entries.values()].sort((a,b) => b.start - a.start) });
+        }
         setError("");
       } while (again.current);
     })().finally(() => {
@@ -83,6 +137,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     return refreshing.current;
   }, []);
+  reloadWindow.current = () => { void refresh().catch(() => {}); };
+  const requestWeek = useCallback((week: string | null) => {
+    if (week === requestedWeek.current) return;
+    requestedWeek.current = week;
+    void refresh().catch(e => setError((e as Error).message));
+  }, [refresh]);
   useEffect(() => {
     let alive = true;
     async function initialize() {
@@ -111,7 +171,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const userId = state?.me.id;
   useEffect(() => {
     if (!userId) return;
-    const stream = new EventSource("/api/events");
+    const stream = new EventSource("/api/events?delta=1");
     const sync = () => {
       void refresh().catch((e) => {
         if (e.status !== 401) setConnected(false);
@@ -121,6 +181,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setConnected(true);
       sync();
     });
+    let active = true;
+    stream.addEventListener("entry", async (event: MessageEvent<string>) => {
+      try {
+        const { id, revision } = JSON.parse(event.data);
+        if (revision <= fullRevision.current || revision <= (changes.current.get(id)?.revision ?? -1)) return;
+        const update = await api<{ entry: Entry; revision: number }>("/api/entries/" + encodeURIComponent(id));
+        if (active) applyEntry(update);
+      } catch { if (active) sync(); }
+    });
     stream.addEventListener("change", sync);
     stream.addEventListener("auth", clear);
     stream.onerror = () => setConnected(false);
@@ -129,10 +198,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
     document.addEventListener("visibilitychange", focus);
     return () => {
+      active = false;
       stream.close();
       document.removeEventListener("visibilitychange", focus);
     };
-  }, [userId, refresh, clear]);
+  }, [userId, refresh, clear, applyEntry]);
   async function login(path: string, data: unknown) {
     await api(path, "POST", data);
     await refresh();
@@ -148,8 +218,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     method: string,
     data: unknown,
     message = "Modifications enregistrées.",
+    key: string = crypto.randomUUID(),
   ) {
-    const key = crypto.randomUUID();
+    const generation = epoch.current;
     let result: T;
     try {
       result = await api<T>(path, method, data, key);
@@ -170,7 +241,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         throw e;
       }
     }
-    await refresh().catch(() =>
+    if (generation !== epoch.current) return result;
+    const update = result as { entry?: Entry; revision?: number };
+    if (update.entry && update.revision !== undefined && !(path === "/api/timer/start" && (data as { expectedRunningId?: string }).expectedRunningId)) {
+      applyEntry({ entry: update.entry, revision: update.revision });
+    } else await refresh().catch(() =>
       toast.warning("Enregistré. Actualisation en attente de la reconnexion."),
     );
     if (message) toast.success(message);
@@ -189,6 +264,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         connected,
         clockOffset: offset,
         refresh,
+        requestWeek,
         login,
         logout,
         mutate,

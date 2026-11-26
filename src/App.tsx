@@ -28,14 +28,15 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp, useWorkspace, useNow } from "@/lib/app-context";
-import { duration, elapsed, dayKey, clockTime } from "@/lib/time";
+import { duration, elapsed, dayKey, clockTime, weekDays } from "@/lib/time";
 import { LoginPage } from "@/pages/login-page";
+import { EntrySavesProvider, SaveStatus, useEntrySaves } from "@/components/entry-autosave";
 import { TimePage } from "@/pages/time-page";
 import { CatalogPage } from "@/pages/catalog-page";
 import { EntryEditor } from "@/components/editors";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { Entry } from "@/lib/types";
+import type { Entry, ExportConfig } from "@/lib/types";
 const loadReports = () => import("@/pages/reports-page").then(m => ({ default: m.ReportsPage }));
 const loadExports = () => import("@/pages/exports-page").then(m => ({ default: m.ExportsPage }));
 const loadSettings = () => import("@/pages/settings-page").then(m => ({ default: m.SettingsPage }));
@@ -74,13 +75,13 @@ export default function App() {
   if (!state) return <LoginPage />;
   return (
     <AppBoundary>
-      <Workspace key={state.me.id} />
+      <EntrySavesProvider key={state.me.id}><Workspace /></EntrySavesProvider>
       {error && <p role="alert">{error}</p>}
     </AppBoundary>
   );
 }
 function Workspace() {
-  const { state, connected, logout, mutate, preference } = useWorkspace();
+  const { state, connected, logout, mutate, preference, requestWeek } = useWorkspace();
   const now = useNow();
   const initial =
     location.hash.slice(1) || state.me.preferences.page || "timer";
@@ -93,6 +94,7 @@ function Workspace() {
     unclassified = state.entries.filter(
       (e) => e.user_id === state.me.id && !e.task_id,
     ).length;
+  const saves = useEntrySaves();
   const [timerBusy, setTimerBusy] = useState(false);
   useEffect(() => {
     const hash = () => {
@@ -116,7 +118,13 @@ function Workspace() {
       link.href = "/favicon.svg";
     };
   }, [!!running]);
-  const go = (p: Page) => {
+  useEffect(() => {
+    if (page === "timer" || page === "unclassified") return;
+    requestWeek(["clients", "projects", "tasks", "leaves", "settings"].includes(page) ? null : weekDays()[0]);
+  }, [page, requestWeek]);
+  const [exportConfig, setExportConfig] = useState<ExportConfig>();
+  const go = (p: Page, config?: ExportConfig) => {
+    setExportConfig(config);
     setPage(p);
     setMenu(false);
     location.hash = p;
@@ -127,10 +135,11 @@ function Workspace() {
     if (!running || timerBusy) return;
     setTimerBusy(true);
     try {
+      const saved = await saves.flush(saves.keyFor(running));
       await mutate(
         "/api/timer/stop",
         "POST",
-        { id: running.id, version: running.version },
+        { id: running.id, version: Math.max(saved?.version ?? 0, running.version) },
         "Chrono arrêté.",
       );
     } catch (e) {
@@ -314,6 +323,12 @@ function Workspace() {
           </div>
         )}
         <main className="page-content" id="main-content" tabIndex={-1}>
+          {saves.outstanding().filter(([id, d]) => !running || d.base?.id !== running.id).map(([id, d]) => (
+            <div key={id} className="rounded-lg border p-3">
+              <strong className="text-sm">Saisie à vérifier · {d.pending.description || d.base?.description || "Pointage"}</strong>
+              <SaveStatus draftKey={id} entry={state.entries.find(e => e.id === d.base?.id)} />
+            </div>
+          ))}
           {long && (
             <div className="timer-warning">
               <div>
@@ -358,9 +373,9 @@ function Workspace() {
               page === "clients" ? (
               <CatalogPage key={page} kind={page} />
             ) : page === "reports" ? (
-              <ReportsPage onExport={() => go("exports")} />
+              <ReportsPage onExport={(config) => go("exports", config)} />
             ) : page === "exports" ? (
-              <ExportsPage />
+              <ExportsPage initialConfig={exportConfig} />
             ) : (
               <SettingsPage />
             )}

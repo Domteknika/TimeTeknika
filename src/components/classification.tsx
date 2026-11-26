@@ -65,6 +65,25 @@ export function Classification({
     }
     return grouped;
   }, [state.tasks, state.projects, state.me.id, projectId, originalTaskId, query]);
+  const recentTasks = useMemo(() => {
+    if (!open || query) return [];
+    const available = new Map([...tasksByProject.values()].flat().filter(t => !t.archived && t.assignees.includes(state.me.id)).map(t => [t.id, t]));
+    const recent = [];
+    const lastUsed = new Map((state.recentTasks ?? []).map(t => [t.id, t.start]));
+    for (const e of state.entries) {
+      if (e.user_id === state.me.id && e.task_id && e.start > (lastUsed.get(e.task_id) ?? 0)) lastUsed.set(e.task_id, e.start);
+    }
+    for (const [taskId] of [...lastUsed].sort((a,b) => b[1] - a[1])) {
+      const t = available.get(taskId);
+      if (!t) continue;
+      available.delete(t.id);
+      const p = state.projects.find(p => p.id === t.project_id);
+      if (!p || p.archived) continue;
+      recent.push({ task: t, project: p, client: state.clients.find(c => c.id === p.client_id)?.name });
+      if (recent.length === 4) break;
+    }
+    return recent;
+  }, [open, query, tasksByProject, state]);
   return (
     <div className="grid min-w-0 gap-3 sm:grid-cols-2">
       <div className="grid min-w-0 gap-2">
@@ -135,6 +154,14 @@ export function Classification({
             >
               Sans tâche · à classer
             </button>
+            {!!recentTasks.length && <section className="border-t pt-2">
+              <h3 className="px-2 text-xs text-muted-foreground">Tâches récentes</h3>
+              {recentTasks.map(({ task, project, client }) => <button type="button" key={task.id}
+                className="block w-full rounded-md px-2 py-1 text-left text-sm hover:bg-muted"
+                onClick={() => { onChange(task.id, project.id, "task"); setOpen(false); }}>
+                {task.name} <small className="text-muted-foreground"> · {project.name} · {client}</small>
+              </button>)}
+            </section>}
             {!tasksByProject.size && <p className="p-3 text-sm text-muted-foreground">Aucune tâche disponible{projectId ? " dans ce projet" : ""}.</p>}
             {projects.map((p) => {
               const tasks = tasksByProject.get(p.id) ?? [];

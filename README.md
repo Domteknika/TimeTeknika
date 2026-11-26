@@ -40,7 +40,8 @@ Les onglets d’un même navigateur partagent le cookie de connexion : changer d
 - Démarrage sans tâche ; rubrique **À classer** et rappel dans l’application à partir de l’heure choisie (16 h par défaut). Ces heures restent dans les totaux.
 - Création de clients, projets, tâches et affectations multiples **par tous les membres**. Créer un projet n’accorde aucun droit supplémentaire sur les temps.
 - Sélection d’une tâche → projet et client déduits. Entrée sans tâche : projet facultatif. Le client découle du projet ; un client interne peut regrouper le travail non facturable.
-- Dans **Modifier le temps**, le choix d’une tâche est enregistré immédiatement, y compris pour un chrono en cours. La description, les horaires et le choix du projet seul restent à valider avec **Enregistrer**. Une nouvelle entrée se valide aussi avec **Enregistrer**.
+- Dans le bandeau et dans **Modifier le temps**, les changements de projet, de tâche, de description et d’horaires sont enregistrés automatiquement. Le calendrier suit le même pointage. **Arrêter** clôt le créneau et vide le bandeau. Un créneau manuel se crée après une première modification valide. Un chevauchement exige une confirmation.
+- Le rapport affiche le numéro et l’année ISO de la semaine consultée. **Exporter les temps** reprend la période, les filtres et les chronos inclus dans le rapport.
 - Le bouton **Supprimer** de cette fenêtre permet de retirer ses propres temps arrêtés après confirmation, avec une action **Rétablir**. L’historique est conservé ; arrêter le chrono avant de supprimer une entrée en cours.
 - Sélecteur de tâches organisé par projets repliables, avec client, couleur et nombre de tâches. Les projets épinglés sont placés en tête, dans la saisie d’une entrée comme dans le chrono ; ils remontent aussi dans la liste des projets du formulaire. Épingles et projets repliés sont personnels, conservés sur le serveur et synchronisés entre sessions. La recherche trouve les tâches des projets repliés sans changer cette organisation.
 - Liste et calendrier hebdomadaires : le créneau actif grandit chaque seconde avec le compteur, sans rechargement. Les projets et les tâches peuvent être archivés et réactivés.
@@ -73,7 +74,7 @@ Les données métier et préférences sont conservées **uniquement côté serve
 
 Les notifications passent par **Server-Sent Events (SSE)** ; les écritures passent par HTTP. Les événements ne contiennent que la révision globale, pas les entrées privées. Chaque session recharge ensuite son état autorisé. Un formulaire déjà ouvert conserve ses valeurs et sa version ; un conflit est signalé au lieu d’écraser la dernière écriture.
 
-Une coupure réseau n’arrête pas un chrono déjà enregistré : sa durée est calculée depuis l’heure de départ serveur. Les modifications hors connexion ne sont pas mises en file locale. Après une réponse incertaine, le client retente avec la même clé ; en cas d’échec persistant, il invite à vérifier l’état synchronisé avant de recréer l’opération. L’arrêt après reconnexion est horodaté à sa réception : corriger l’horaire si nécessaire.
+Une coupure réseau n’arrête pas un chrono déjà enregistré : sa durée est calculée depuis l’heure de départ serveur. Les corrections de pointage en attente sont conservées pour ce compte dans la session de l’onglet, y compris après actualisation. Après une réponse incertaine, le client retente avec la même clé ; en cas d’échec persistant, il invite à vérifier l’état synchronisé avant de recréer l’opération. L’arrêt après reconnexion est horodaté à sa réception : corriger l’horaire si nécessaire.
 
 Les responsables ont ici un périmètre **global sur l’équipe** ; les projets et leurs affectations sont visibles par tous. Les membres ne voient ni les entrées ni les cumuls d’équipe qui permettraient de déduire les heures des collègues.
 
@@ -115,6 +116,8 @@ La configuration `.env.postgres` appartient à root en mode `600` ; conserver ce
 Le port publié est limité à 127.0.0.1 et le mode démo est désactivé. Un proxy doit transmettre le flux `/api/events` sans mise en tampon et tolérer les connexions longues. Le volume `teknika-data` conserve les fichiers SQLite ; la configuration complémentaire crée le volume persistant `teknika-postgres`. Ne pas employer `docker compose down -v` pour une simple mise à jour : cela supprimerait les volumes de données.
 
 ## Sauvegarde et restauration
+
+Pour contrôler la copie hors serveur, exécuter sur la machine de sauvegarde `bash scripts/check-postgres-backup.sh /mnt/sauvegardes/timeteknika IMAGE_APPLICATION`. Utiliser l’image Docker de la version à vérifier. Le script contrôle l’âge de la dernière archive (48 heures par défaut, réglable via `MAX_BACKUP_AGE_HOURS`), son empreinte, puis la restaure dans une base temporaire isolée et vérifie le journal. Planifier cette commande quotidiennement dans la supervision et alerter en cas d’échec ou d’absence de contrôle réussi. La copie de l’archive et de son fichier `.sha256` vers ce stockage est à configurer chez l’exploitant.
 
 Après migration, `sudo bash scripts/backup-linux.sh` appelle `scripts/backup-postgres.sh` : `pg_dump` crée une archive PostgreSQL, `pg_restore --list` en contrôle la liste, puis une empreinte SHA-256 est conservée. Les fichiers restent privés sur le serveur. Une restauration complète sur une base PostgreSQL isolée a été vérifiée avant la bascule, et l'audit final a confirmé les empreintes des sauvegardes conservées. La fréquence, la rétention et la copie sur un stockage séparé restent à vérifier avec la configuration d'exploitation du serveur.
 
@@ -166,7 +169,7 @@ node --test tests/*.test.mjs
 
 Les tests couvrent les droits, les créations multi-personnes, l’idempotence, la concurrence des chronos, les conflits d’édition, les chevauchements, la synchronisation SSE, les cumuls, les journées de 23/25 h, l’installation, la connexion, la persistance et la sauvegarde. Les exports sont vérifiés par calculs, réouverture des fichiers Excel, génération PDF, routes HTTP et interactions DOM isolées du constructeur. Ils utilisent des bases temporaires ; les fichiers de la recette de persistance restent dans `.qa/`.
 
-Validation effectuée : **159 tests de la suite complète et 2 tests UI réussis**, ainsi que `pnpm typecheck`, `pnpm build` et `pnpm db:check`. Les contrôles ciblés ajoutés ensuite passent également : 5 tests CLI, 3 tests d'audit et 4 tests Linux de préparation des sauvegardes. `pnpm test:db` vérifie le schéma, le stockage, les routes PostgreSQL et l'import SQLite avec PGlite. Le déploiement Docker, l'import réel, la restauration et une sonde de concurrence sur deux pools `pg` sont validés sur le serveur. Les scénarios métier concurrents exhaustifs, les pannes du pool et les performances restent à tester sur PostgreSQL natif.
+La recette de la saisie automatique couvre notamment la perte de réponse après création, les corrections concurrentes, l’annulation, les soldes hors de la semaine affichée et les rapports entre deux années ISO. Sur une base SQLite en mémoire de 5 002 pointages personnels, la réponse HTTP complète occupait 1 296 385 octets, contre 3 826 octets sur la vue hebdomadaire testée. Les médianes locales étaient respectivement de 42 et 7 ms sur sept lectures après préchauffage. Les délais sous charge sur PostgreSQL natif sont à mesurer sur l’environnement de recette. `pnpm release` lance le typage, les tests métier, la compilation et les tests navigateur avant d’emballer l’application.
 
 ## Limites assumées de cette version
 
@@ -174,9 +177,9 @@ Validation effectuée : **159 tests de la suite complète et 2 tests UI réussis
 - Exports : maximum 370 jours et 20 000 entrées par génération ; l’aperçu affiche les 200 premières lignes, les fichiers contiennent toutes les lignes. Modèles personnels uniquement (50 par personne), aucun envoi automatique. Les valeurs des chronos sont figées à l’instant de génération ; les colonnes Début/Fin retenus correspondent à la portion réellement exportée.
 - Les responsables peuvent modifier les identifiants et retirer les accès dans Mon profil. Les heures et l’historique restent conservés ; un chrono actif bloque le retrait. Pas encore de responsable limité à certains projets. La récupération sans email passe par un autre responsable ou le script serveur de secours documenté dans la notice.
 - Calendrier de consultation : pas de glisser-déposer ni de planning prévisionnel. Les chevauchements volontaires peuvent superposer des blocs.
-- Les rapports chargent les entrées autorisées en mémoire serveur ; pagination et optimisation à prévoir avec le volume réel.
+- Les rapports et exports lisent en base les entrées autorisées qui recoupent la période demandée.
 - Le rappel n’est visible que dans l’application ouverte ; aucune notification email ou système.
-- Pas de mode hors ligne, de brouillons persistants ni de garantie de récupération d’un texte non envoyé.
+- Les corrections de pointage supportent une perte de connexion et un rechargement de l’onglet. Démarrer et arrêter un chrono nécessitent une réponse du serveur.
 - La planification des sauvegardes est fournie pour systemd ; son activation, la rétention, la copie hors serveur et la supervision restent à vérifier. La migration et la restauration d'essai ont été validées sur le serveur. Les logs Docker sont limités à trois fichiers de 10 Mo.
 
 L’audit documentaire et le périmètre initial sont dans [l’étude Toggl](docs/ETUDE_TOGGL_STRATEGIE_V1.md) et [le registre des sources](docs/TOGGL_SOURCES.md).

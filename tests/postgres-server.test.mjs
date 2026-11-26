@@ -66,6 +66,45 @@ test('PostgreSQL HTTP : stockage asynchrone, droits, catalogue, temps et journal
     expect(await member.request('/api/preferences', 'PATCH', { reminderHour: 15 }, { headers: { 'X-CSRF-Token': 'invalid' } }), 403);
   });
 
+  await t.test('vue hebdomadaire privée et modification partielle du chrono', async () => {
+    const scoped = expect(await admin.request('/api/state?week=2025-12-29'));
+    assert.ok(scoped.entryWindow && Number.isFinite(scoped.entryWindow.omittedSeconds));
+    assert.ok(scoped.entries.every(row => row.user_id === scoped.me.id));
+    expect(await admin.request('/api/preferences','PATCH',{reportChart:'bars'}));
+    assert.equal(expect(await admin.request('/api/state')).reportRevision,scoped.reportRevision);
+    const running = expect(await member.request('/api/timer/start','POST',{expectedRunningId:null})).entry;
+    const classified = expect(await member.request('/api/entries/'+running.id,'PATCH',
+      {version:running.version, task_id:'task-plans'})).entry;
+    assert.deepEqual([classified.start,classified.end,classified.project_id], [running.start,null,'project-cedres']);
+    const moved = expect(await member.request('/api/entries/'+running.id,'PATCH',
+      {version:classified.version, project_id:'project-atelier'})).entry;
+    assert.equal(moved.task_id,null);
+    expect(await other.request('/api/entries/'+moved.id),404);
+    assert.equal(expect(await member.request('/api/timer/status')).active,true);
+    expect(await member.request('/api/timer/stop','POST',{id:moved.id,version:moved.version}));
+    expect(await member.request('/api/entries/'+moved.id,'DELETE',{version:moved.version+1}));
+  });
+  await t.test('le cumul historique reste identique en changeant de semaine ou de classement', async () => {
+    const previous = expect(await member.request('/api/state')).me.preferences.balanceStartDate;
+    expect(await member.request('/api/preferences','PATCH',{balanceStartDate:'2000-01-03'}));
+    const week = '/api/state?week=2000-01-03';
+    const before = expect(await member.request(week)).entryWindow.omittedSeconds;
+    const historic = expect(await member.request('/api/entries','POST', manual({
+      task_id:'task-plans', project_id:'project-cedres', start:'2000-02-02T07:00:02Z', end:'2000-02-02T07:40:04Z'
+    }))).entry;
+    const hidden = expect(await member.request(week));
+    assert.ok(!hidden.entries.some(e => e.id === historic.id));
+    assert.equal(hidden.entryWindow.omittedSeconds - before, 2402);
+    const visible = expect(await member.request('/api/state?week=2000-01-31'));
+    assert.ok(visible.entries.some(e => e.id === historic.id));
+    assert.equal(visible.entryWindow.omittedSeconds, before);
+    const unclassified = expect(await member.request('/api/entries/'+historic.id,'PATCH',{version:historic.version,task_id:null})).entry;
+    const after = expect(await member.request(week));
+    assert.ok(after.entries.some(e => e.id === historic.id));
+    assert.equal(after.entryWindow.omittedSeconds, before);
+    expect(await member.request('/api/entries/'+historic.id,'DELETE',{version:unclassified.version}));
+    expect(await member.request('/api/preferences','PATCH',{balanceStartDate:previous}));
+  });
   await t.test('catalogue partagé, unicité, affectations et booléens d’archivage', async () => {
     customer = expect(await member.request('/api/clients', 'POST', { name: 'Client PostgreSQL' })).client;
     expect(await member.request('/api/clients', 'POST', { name: 'client postgresql' }), 409);

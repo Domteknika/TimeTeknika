@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, createHash } from 'node:crypto';
 import { passwordHash, passwordMatches } from './store.mjs';
 import { openApplicationStore, seedApplicationDemo } from './async-store.mjs';
-import { AppError, fail, id, text, instant, report, midnight } from './domain.mjs';
-import { buildExport, omitTaskStatus, validateExportConfig } from './exports.mjs';
+import { AppError, fail, id, text, instant, report, midnight, nextDate, dateInZone } from './domain.mjs';
+import { buildExport, exportPeriod, omitTaskStatus, validateExportConfig } from './exports.mjs';
 import { csvExport, xlsxExport, pdfExport, exportFilename } from './export-files.mjs';
 import { previewCatalogDeletion, deleteCatalogItem } from './catalog-delete.mjs';
 import { PROJECT_COLORS } from '../public/project-colors.js';
@@ -173,17 +173,21 @@ export async function createApplication({
       return operation();
     });
   }
-  async function publish() {
+  async function publish(change) {
     for (const stream of streams) {
       if (stream.res.destroyed || stream.res.writableEnded) {
         streams.delete(stream);
         continue;
       }
-      const session = await one("SELECT s.token FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=true", stream.token, Date.now());
+      const session = await one("SELECT s.token,u.id,u.role,EXISTS(SELECT 1 FROM user_admins a WHERE a.user_id=u.id) AS administrator FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=true", stream.token, Date.now());
       if (!session) {
         stream.res.write('event: auth\ndata: {}\n\n');
         stream.res.end();
         streams.delete(stream);
+      } else if (stream.delta && change?.entry) {
+        // The event only identifies the entry. The read endpoint checks current permissions again.
+        if (session.id === change.entry.user_id || session.role === 'manager' || session.administrator)
+          stream.res.write(`event: entry\ndata: ${JSON.stringify({ id: change.entry.id, revision: change.revision })}\n\n`);
       } else stream.res.write(`event: change\ndata: ${JSON.stringify({
         revision: await store.revision()
       })}\n\n`);
@@ -207,6 +211,9 @@ export async function createApplication({
         ...result,
         revision: await store.revision()
       };
+      if (/^\/api\/(?:entries|timer|clients|projects|tasks|users)(?:\/|$)/.test(req.url)) {
+        await run("INSERT INTO meta(key,value) VALUES('report_revision',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", output.revision);
+      }
       await run("INSERT INTO requests(user_id,key,fingerprint,result,at) VALUES (?,?,?,?,?)", user.id, key, fingerprint, JSON.stringify(output), Date.now());
       await store.log({
         category: 'request',
@@ -220,8 +227,36 @@ export async function createApplication({
       return output;
     });
     // A failed notification must never turn a committed mutation into a failed response.
-    if (!requestContext.getStore().replayed) await background(publish, 'publish-failed');
+    if (!requestContext.getStore().replayed) await background(
+      () => publish(output.entry && !(req.url === '/api/timer/start' && data.expectedRunningId) ? output : undefined),
+      'publish-failed'
+    );
     return output;
+  }
+  async function periodEntries(user, from, to) {
+    const clause = ['manager', 'admin'].includes(user.role) ? '' : ' AND user_id=?';
+    const args = clause ? [to, from, user.id] : [to, from];
+    return all('SELECT * FROM entries WHERE deleted=false AND start<? AND ("end" IS NULL OR "end">=?)' + clause + ' ORDER BY start DESC', ...args);
+  }
+  async function weekSnapshot(user, week) {
+    const now = Date.now();
+    const day = dateInZone(now);
+    const shift = (date, days) => new Date(Date.parse(date + 'T12:00:00Z') + days * 86400000).toISOString().slice(0, 10);
+    const monday = shift(day, -((new Date(day + 'T12:00:00Z').getUTCDay() + 6) % 7));
+    const from = midnight(week), to = midnight(shift(week, 7));
+    const current = midnight(monday), next = midnight(shift(monday, 7));
+    const included = '("end" IS NULL OR task_id IS NULL OR (start<? AND "end">=?) OR (start<? AND "end">=?))';
+    const bounds = [to, from, next, current];
+    const entries = await all('SELECT * FROM entries WHERE user_id=? AND deleted=false AND ' + included + ' ORDER BY start DESC', user.id, ...bounds);
+    const snapshot = await store.snapshot(user, entries);
+    const since = midnight(snapshot.me.preferences.balanceStartDate || monday);
+    const totals = since >= current ? { ms: 0 } : await one(
+      'SELECT COALESCE(SUM("end" - CASE WHEN start<? THEN CAST(? AS BIGINT) ELSE start END),0) AS ms FROM entries ' +
+      'WHERE user_id=? AND deleted=false AND "end">? AND "end"<? AND NOT ' + included,
+      since, since, user.id, since, current, ...bounds);
+    const recent = await all('SELECT task_id, MAX(start) AS last_used FROM entries WHERE user_id=? AND deleted=false AND task_id IS NOT NULL GROUP BY task_id ORDER BY last_used DESC LIMIT 20', user.id);
+    return { ...snapshot, entryWindow: { from, to, current, next, omittedSeconds: Number(totals.ms) / 1000 },
+      recentTasks: recent.map(row => ({ id: row.task_id, start: Number(row.last_used) })) };
   }
   async function exists(table, value) {
     const item = await one(`SELECT * FROM ${table} WHERE id=?`, value);
@@ -232,7 +267,14 @@ export async function createApplication({
     if (item.version !== data.version) fail(409, 'Cet élément a été modifié. Rechargez avant d’enregistrer.', 'version_conflict');
   }
   async function entryData(user, data, previous = null) {
-    const classification = await store.classification(user, data.task_id, data.project_id, previous);
+    const changedProject = Object.hasOwn(data, 'project_id') && data.project_id !== previous?.project_id;
+    const taskId = Object.hasOwn(data, 'task_id') ? data.task_id : changedProject ? null : previous?.task_id;
+    const projectId = Object.hasOwn(data, 'project_id') ? data.project_id : data.task_id ? null : previous?.project_id;
+    const classification = await store.classification(user, taskId, projectId, previous);
+    if (previous) data = {
+      description: previous.description, start: new Date(previous.start).toISOString(),
+      end: previous.end === null ? null : new Date(previous.end).toISOString(), ...data
+    };
     const start = instant(data.start, 'Début'),
       end = data.end === null ? null : instant(data.end, 'Fin');
     const now = Date.now();
@@ -242,7 +284,7 @@ export async function createApplication({
     }
     if (end !== null && (end < start || end === start && !(previous?.start === start && previous?.end === end))) fail(400, 'La fin doit suivre le début.');
     const description = text(data.description ?? '', 'Description', 2000, false);
-    const overlaps = await store.overlaps(user, start, end ?? now, previous?.id);
+    const overlaps = previous && previous.start === start && previous.end === end ? [] : await store.overlaps(user, start, end ?? now, previous?.id);
     if (overlaps.length && !data.confirmOverlap) fail(409, 'Ce créneau chevauche une autre de vos entrées. Vérifiez les horaires ou confirmez le chevauchement.', 'overlap', {
       count: overlaps.length
     });
@@ -438,11 +480,23 @@ export async function createApplication({
           });
           return json(res, 200, output);
         }
+        if (path === '/api/timer/status' && method === 'GET') return json(res, 200,
+          await readAuthorized(req, user, session, async () => ({
+            userId: user.id, active: !!await one('SELECT id FROM entries WHERE user_id=? AND deleted=false AND "end" IS NULL', user.id)
+          })));
+        if (/^\/api\/entries\/[^/]+$/.test(path) && method === 'GET') return json(res, 200,
+          await readAuthorized(req, user, session, async () => {
+            const entry = await exists('entries', path.split('/')[3]);
+            if (entry.user_id !== user.id && !['manager','admin'].includes(user.role)) fail(404, 'Entrée introuvable.');
+            return { entry, revision: await store.revision() };
+          }));
         if (path === '/api/state' && method === 'GET') return json(res, 200, {
           ...(await readAuthorized(req, user, session, async () => {
-            const snapshot = await store.snapshot(user);
+            const week = url.searchParams.get("week");
+            const snapshot = week ? await weekSnapshot(user, week) : await store.snapshot(user);
             return {
               ...snapshot,
+              reportRevision: Number((await one("SELECT value FROM meta WHERE key='report_revision'"))?.value ?? 0),
               exportTemplates: snapshot.exportTemplates.map(template => ({ ...template, config: omitTaskStatus(template.config) })),
               workTime: await workTimeSnapshot(store, user.id)
             };
@@ -466,7 +520,7 @@ export async function createApplication({
           });
           const stream = {
             res,
-            token: session.token
+            token: session.token, delta: url.searchParams.has('delta')
           };
           streams.add(stream);
           req.on('close', () => streams.delete(stream));
@@ -489,7 +543,7 @@ export async function createApplication({
           const filters = await body(req);
           if (filters.search !== undefined) filters.search = text(filters.search, 'Recherche', 200, false);
           const output = await readAuthorized(req, user, session, async () => ({
-            ...report(await store.visibleEntries(user), filters, await store.lookups()),
+            ...report(await periodEntries(user, midnight(filters.from), midnight(nextDate(filters.to))), filters, await store.lookups()),
             revision: await store.revision()
           }));
           return json(res, 200, output);
@@ -499,10 +553,12 @@ export async function createApplication({
           const {
             model,
             revision
-          } = await readAuthorized(req, user, session, async () => ({
-            model: buildExport(await store.visibleEntries(user), await store.lookups(), data.config, user),
-            revision: await store.revision()
-          }));
+          } = await readAuthorized(req, user, session, async () => {
+            const config = validateExportConfig(data.config, user);
+            const now = Date.now(), period = exportPeriod(config.period, now);
+            return { model: buildExport(await periodEntries(user, period.begin, period.end), await store.lookups(), config, user, now),
+              revision: await store.revision() };
+          });
           if (path.endsWith('/preview')) return json(res, 200, {
             ...model,
             rows: model.rows.slice(0, 200),
@@ -746,8 +802,9 @@ export async function createApplication({
           if (/^\/api\/entries\/[^/]+$/.test(path) && method === 'PATCH') {
             const entry = await store.ownedEntry(user, path.split('/')[3], data.version);
             if (entry.end !== null && data.end === null) fail(400, 'Utilisez Continuer pour reprendre cette activité.');
+            const values = await entryData(user, data, entry);
             return {
-              entry: await saveEntry(user, await entryData(user, data, entry), entry)
+              entry: Object.keys(values).every(key => values[key] === entry[key]) ? entry : await saveEntry(user, values, entry)
             };
           }
           if (/^\/api\/entries\/[^/]+$/.test(path) && method === "DELETE") {

@@ -59,11 +59,11 @@ type Preview = {
   runningCount: number;
   period: { from: string; to: string };
 };
-export function ExportsPage() {
+export function ExportsPage({ initialConfig }: { initialConfig?: ExportConfig }) {
   const { state, mutate } = useWorkspace(),
     days = weekDays();
   const [config, setConfig] = useState<ExportConfig>(
-    () => defaultExportConfig(days[0], days[6]) as ExportConfig,
+    () => initialConfig ?? defaultExportConfig(days[0], days[6]) as ExportConfig,
   );
   const [preview, setPreview] = useState<Preview | null>(null),
     [error, setError] = useState(""),
@@ -77,9 +77,10 @@ export function ExportsPage() {
     } | null>(null),
     [save, setSave] = useState(false);
   useEffect(() => {
+    if (!preview?.runningCount) return;
     const timer = setInterval(() => setTick((t) => t + 1), 15000);
     return () => clearInterval(timer);
-  }, []);
+  }, [!!preview?.runningCount]);
   useEffect(() => {
     const c = new AbortController();
     setPreviewBusy(true);
@@ -106,7 +107,7 @@ export function ExportsPage() {
       c.abort();
       clearTimeout(timer);
     };
-  }, [config, state.revision, tick]);
+  }, [config, state.reportRevision, tick]);
   const update = (patch: Partial<ExportConfig>) =>
     setConfig((c) => ({ ...c, ...patch }));
   function mode(value: "detail" | "summary", groups = config.groups) {

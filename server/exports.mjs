@@ -1,4 +1,4 @@
-import { fail, midnight, nextDate, dateInZone, text } from './domain.mjs';
+import { fail, midnight, nextDate, dateInZone, text, searchText } from './domain.mjs';
 import { EXPORT_COLUMNS, EXPORT_GROUPS, EXPORT_PERIODS, availableExportColumns } from '../public/export-config.js';
 
 const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
@@ -56,7 +56,6 @@ export function validateExportConfig(input,user) {
   config.document={title:text(config.document.title,'Titre',120),company:text(config.document.company??'','Émetteur',120,false),reference:text(config.document.reference??'','Référence',100,false),note:text(config.document.note??'','Note',1000,false),orientation:choice(config.document.orientation,['auto','portrait','landscape'],'Orientation')};
   return config;
 }
-const normalized=value=>String(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('fr');
 const clock=value=>new Intl.DateTimeFormat('fr-CH',{timeZone:'Europe/Zurich',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(value);
 const dateValues=day=>({day,week:monday(day),month:day.slice(0,7)});
 const collator=new Intl.Collator('fr',{numeric:true,sensitivity:'base'});
@@ -69,12 +68,12 @@ export function buildExport(entries,lookups,input,user,timestamp=Date.now()) {
   for(const entry of entries){
     if(entry.deleted||!['manager','admin'].includes(user.role)&&entry.user_id!==user.id)continue;
     const p=maps.projects.get(entry.project_id),t=maps.tasks.get(entry.task_id),c=maps.clients.get(p?.client_id);
-    const start=Math.max(entry.start,period.begin),end=Math.min(entry.end??timestamp,period.end,timestamp);
+    const start=Math.max(entry.start,period.begin),end=Math.min(entry.end??timestamp,period.end);
     if(end<start||end===start&&!(entry.start>=period.begin&&entry.start<period.end))continue;
     if(!selected(f.people,entry.user_id)||!selected(f.clients,c?.id)||!selected(f.projects,p?.id)||!selected(f.tasks,t?.id))continue;
     if(f.classification==='classified'&&!t||f.classification==='unclassified'&&t)continue;
     if(f.timers==='stopped'&&entry.end===null||f.timers==='running'&&entry.end!==null)continue;
-    if(f.query&&!normalized(entry.description).includes(normalized(f.query)))continue;
+    if(f.query&&!searchText(entry.description).includes(searchText(f.query)))continue;
     const seconds=Math.max(0,Math.floor((end-start)/1000));
     const row={id:entry.id,entry,startMs:start,endMs:end,seconds,person:maps.users.get(entry.user_id)?.name??'Ancien membre',client:c?.name??'Sans client',project:p?.name??'Sans projet',task:t?.name??'À classer',description:entry.description,
       ...dateValues(dateInZone(start)),start:clock(start),end:clock(end),duration:seconds,decimal:seconds/3600,count:1,timer:entry.end===null?'En cours':'Arrêté',

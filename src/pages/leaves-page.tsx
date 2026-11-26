@@ -55,7 +55,7 @@ export function LeavesPage() {
         if (!request.signal.aborted) setError(failure.message);
       });
     return () => request.abort();
-  }, [month, retry, state.revision]);
+  }, [month, retry, state.workTime, state.users]);
 
   const workTime = state.workTime ?? emptyWorkTime;
   const calendar = useMemo(() => workCalendar(workTime.schedules, workTime.leaves, workTime.holidays, state.me.preferences.weeklyTargetMinutes),

@@ -1,8 +1,8 @@
-import { useEffect, useState, useMemo, useId, useRef } from "react";
+import { useEffect, useState, useId } from "react";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspace } from "@/lib/app-context";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { Client, Project, Task, Entry } from "@/lib/types";
 import {
   wallTime,
@@ -24,6 +24,8 @@ import {
   Choice,
   ErrorMessage,
 } from "./shared";
+import { SaveStatus, useEntrySaves } from "./entry-autosave";
+import type { EntryFields } from "@/lib/entry-saves";
 import { Classification } from "./classification";
 export type CatalogKind = "clients" | "projects" | "tasks";
 const names = { clients: "client", projects: "projet", tasks: "tâche" };
@@ -183,151 +185,114 @@ export function EntryEditor({
   onClose: () => void;
 }) {
   const { state, clockOffset, mutate } = useWorkspace();
-  const [entry, setEntry] = useState(initialEntry);
+  const saves = useEntrySaves();
+  const [draftKey] = useState(() => {
+    if (initialEntry) return saves.keyFor(initialEntry);
+    const prefix = "timeteknika:manual:" + state.me.id;
+    const fresh = "manual-" + crypto.randomUUID();
+    try {
+      const previous = sessionStorage.getItem(prefix);
+      const d = previous && saves.get(previous);
+      if (previous && ((d && (d.flight || d.error || Object.keys(d.pending).length)) ||
+        sessionStorage.getItem("timeteknika:form:" + state.me.id + ":" + previous))) return previous;
+      sessionStorage.setItem(prefix, fresh);
+    } catch { /* session storage unavailable */ }
+    return fresh;
+  });
+  const draft = saves.get(draftKey);
+  const id = initialEntry?.id ?? draft?.base?.id;
+  const serverEntry = state.entries.find(e => e.id === id);
+  const entry = saves.latest(draftKey, serverEntry ?? initialEntry);
+  const window = state.entryWindow;
+  const outsideWeek = entry && window && entry.task_id && entry.end !== null &&
+    !(entry.start < window.to && entry.end >= window.from) && !(entry.start < window.next && entry.end >= window.current);
+  const deleted = !!initialEntry && !serverEntry && !outsideWeek;
+  const values = saves.values(draftKey, entry);
+  const [opened] = useState(() => Date.now() + clockOffset.current);
+  const initial = {
+    start: values.start == null ? initialStart ?? wallTime(opened - 3600000) : wallTime(values.start),
+    end: values.end == null ? initialEnd ?? wallTime(opened) : wallTime(values.end),
+    running: values.end === null, task_id: values.task_id ?? null, project_id: values.project_id ?? null,
+    description: values.description ?? "",
+  };
+  type Form = typeof initial;
+  const rawKey = "timeteknika:form:" + state.me.id + ":" + draftKey;
+  const [held, setHeld] = useState<Partial<Form>>(() => {
+    try { return JSON.parse(sessionStorage.getItem(rawKey) || "{}"); } catch { return {}; }
+  });
+  const form = { ...initial, ...held };
+  const [confirmOverlap, setConfirm] = useState(false), [invalid, setInvalid] = useState("");
+  const [createTask, setCreateTask] = useState(false), [precise, setPrecise] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Entry | null>(null), [deleting, setDeleting] = useState(false);
   const deleteHintId = useId();
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [savingTask, setSavingTask] = useState(false);
-  const [taskSaved, setTaskSaved] = useState(false);
-  const [taskError, setTaskError] = useState("");
-  const taskWrite = useRef(false);
-  const [now] = useState(() => Date.now() + clockOffset.current);
-  const [taskId, setTask] = useState(entry?.task_id ?? ""),
-    [projectId, setProject] = useState(entry?.project_id ?? "");
-  const [start, setStart] = useState(
-    initialStart ?? wallTime(entry?.start ?? now - 3600000),
-  );
-  const [end, setEnd] = useState(initialEnd ?? wallTime(entry?.end ?? now));
-  const [running, setRunning] = useState(entry?.end === null),
-    [confirmOverlap, setConfirm] = useState(false),
-    [createTask, setCreateTask] = useState(false),
-    [precise, setPrecise] = useState(false),
-    [serverOverlap, setServerOverlap] = useState(false);
-  useEffect(() => { setConfirm(false); setServerOverlap(false); }, [start, end, running]);
-  const timing = useMemo(() => {
+  function hold(next: Partial<Form>) {
+    setHeld(next);
     try {
-      const from = editedInstant(start, entry?.start), to = running ? now : editedInstant(end, entry?.end);
-      return { seconds: (to - from) / 1000, overlap: state.entries.some(e => e.user_id === state.me.id && e.id !== entry?.id && e.start < to && (e.end ?? now) > from) };
-    } catch { return null; }
-  }, [start, end, running, now, entry, state.entries, state.me.id]);
-  const latest = entry && state.entries.find((e) => e.id === entry.id);
-  const stale = entry && !savingTask && (!latest || latest.version !== entry.version);
-  async function chooseClassification(task: string, project: string, field: "task" | "project") {
-    if (taskWrite.current || deleting) return;
-    setTask(task);
-    setProject(project);
-    setTaskSaved(false);
-    setTaskError("");
-    if (!entry || field !== "task") return;
-    if (task === (entry.task_id ?? "") && project === (entry.project_id ?? "")) return;
-    if (stale || entry.user_id !== state.me.id) {
-      setTask(entry.task_id ?? ""); setProject(entry.project_id ?? "");
-      setTaskError("Cette entrée a changé. Fermez puis rouvrez-la avant de choisir une tâche.");
-      return;
-    }
-    taskWrite.current = true;
-    setSavingTask(true);
+      if (Object.keys(next).length) sessionStorage.setItem(rawKey, JSON.stringify(next));
+      else sessionStorage.removeItem(rawKey);
+    } catch { /* current form still retains the draft */ }
+  }
+  function interval(f: Form) {
+    const from = editedInstant(f.start, entry?.start), to = f.running ? null : editedInstant(f.end, entry?.end);
+    if (to !== null && (to < from || to === from && (from !== entry?.start || to !== entry?.end)))
+      throw Error("La fin doit suivre le début.");
+    const until = to ?? Date.now() + clockOffset.current;
+    return { from, to, seconds: (until - from) / 1000,
+      overlap: state.entries.some(e => e.id !== id && e.user_id === state.me.id && e.start < until && (e.end ?? Date.now() + clockOffset.current) > from) };
+  }
+  let timing: ReturnType<typeof interval> | undefined;
+  try { timing = interval(form); } catch { /* incomplete date input */ }
+  function edit(change: Partial<Form>, consent = false) {
+    if (deleted || deleting) return;
+    const changes = { ...held, ...change }, next = { ...form, ...change };
+    const timesChanged = "start" in changes || "end" in changes || "running" in changes;
+    const approved = consent || (!timesChanged && confirmOverlap);
+    if (timesChanged) setConfirm(approved);
+    const patch: Partial<EntryFields> = {};
     try {
-      const result = await mutate<{ entry: Entry }>("/api/entries/" + entry.id, "PATCH", {
-        task_id: task || null, project_id: project || null,
-        // Only classification changes: preserve persisted text and exact times,
-        // including any previously accepted overlap. Other fields remain drafts.
-        description: entry.description, start: new Date(entry.start).toISOString(),
-        end: entry.end === null ? null : new Date(entry.end).toISOString(),
-        version: entry.version, confirmOverlap: true,
-      }, "");
-      setEntry(result.entry);
-      setTaskSaved(true);
+      if (!entry || timesChanged) {
+        const { from, to, overlap } = interval(next);
+        if (overlap && !approved && (from !== entry?.start || to !== entry?.end))
+          throw Error("Ce créneau chevauche un autre temps. Confirmez le chevauchement pour l’enregistrer.");
+        patch.start = from;
+        patch.end = to;
+      }
+      if (!entry || "task_id" in changes || "project_id" in changes) {
+        patch.task_id = next.task_id; patch.project_id = next.project_id;
+      }
+      if (!entry || "description" in changes) patch.description = next.description;
+      hold({});
+      setInvalid("");
+      saves.edit(draftKey, entry, patch, timesChanged || "description" in change ? 500 : 0, approved);
     } catch (error) {
-      setTask(entry.task_id ?? ""); setProject(entry.project_id ?? "");
-      setTaskError((error instanceof ApiError && error.status === 0
-        ? "Impossible de confirmer l’enregistrement de la tâche. "
-        : "La tâche n’a pas été enregistrée. ") + (error as Error).message);
-    } finally {
-      taskWrite.current = false;
-      setSavingTask(false);
+      saves.suspendTiming(draftKey, !entry);
+      hold(!entry ? next : changes);
+      setInvalid((error as Error).message);
     }
   }
+  const close = async () => {
+    if (deleting) return;
+    if (Object.keys(held).length || deleted) { onClose(); return; }
+    try {
+      await saves.flush(draftKey);
+      if (!initialEntry) saves.clear(draftKey);
+      onClose();
+    } catch { /* keep the draft and the retry control visible */ }
+  };
   return (
     <>
-      <Modal
-        title={entry ? "Modifier le temps" : "Ajouter du temps"}
-        description="Ajustez votre activité et ses horaires."
-        onClose={() => { if (!deleting && !taskWrite.current) onClose(); }}
-      >
-        <AsyncForm
-          onCancel={onClose}
-          disabled={savingTask || deleting}
-          actions={entry?.user_id === state.me.id && (
-            <Button
-              type="button"
-              variant="destructive"
-              aria-label="Supprimer ce temps"
-              aria-describedby={entry.end === null ? deleteHintId : undefined}
-              disabled={!!stale || entry.end === null || deleting}
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 /> Supprimer
-            </Button>
-          )}
-          onSubmit={async (f) => {
-            if (taskWrite.current) return;
-            if (stale)
-              throw Error(
-                "Cette entrée a changé. Fermez cette fenêtre puis rouvrez la version actualisée.",
-              );
-            try { await mutate(
-              "/api/entries" + (entry ? "/" + entry.id : ""),
-              entry ? "PATCH" : "POST",
-              {
-                task_id: taskId || null,
-                project_id: projectId || null,
-                description: f.get("description"),
-                start: new Date(
-                  editedInstant(start, entry?.start),
-                ).toISOString(),
-                end: running
-                  ? null
-                  : new Date(editedInstant(end, entry?.end)).toISOString(),
-                version: entry?.version,
-                confirmOverlap,
-              },
-            ); } catch (e) {
-              if (e instanceof ApiError && e.code === "overlap") setServerOverlap(true);
-              throw e;
-            }
-            onClose();
-          }}
-        >
+      <Modal title={initialEntry ? "Modifier le temps" : "Ajouter du temps"} onClose={() => void close()}
+        description="Vos modifications sont enregistrées automatiquement.">
+        <div className="grid gap-5">
+          <fieldset disabled={deleting || deleted} className="grid min-w-0 gap-5">
           <Field label="Description">
-            <Textarea
-              name="description"
-              defaultValue={entry?.description ?? ""}
-              maxLength={2000}
-              placeholder="Sur quoi avez-vous travaillé ?"
-              autoFocus
-            />
+            <Textarea value={form.description} maxLength={2000} placeholder="Sur quoi avez-vous travaillé ?"
+              onChange={e => edit({ description: e.target.value })} autoFocus />
           </Field>
           <div className="grid gap-2">
-            <Classification
-              showLabels
-              taskId={taskId}
-              projectId={projectId}
-              originalTaskId={entry?.task_id}
-              disabled={savingTask || deleting || !!stale}
-              onChange={(t, p, field) => { void chooseClassification(t, p, field); }}
-            />
-            {entry && <p role="status" className="text-xs text-muted-foreground">
-              {savingTask ? "Enregistrement de la tâche…" : taskSaved ? "Tâche enregistrée." : "La tâche est enregistrée dès sa sélection."}
-              {" "}Les autres champs se valident avec Enregistrer.
-            </p>}
-            <ErrorMessage message={taskError} />
-            <Button
-              type="button"
-              variant="link"
-              className="justify-start px-0"
-              onClick={() => setCreateTask(true)}
-            >
+            <Classification showLabels taskId={form.task_id ?? ""} projectId={form.project_id ?? ""}
+              originalTaskId={entry?.task_id} onChange={(task, project) => edit({ task_id: task || null, project_id: project || null })} />
+            <Button type="button" variant="link" className="justify-start px-0" onClick={() => setCreateTask(true)}>
               + Créer une tâche
             </Button>
           </div>
@@ -337,63 +302,59 @@ export function EntryEditor({
               <span className="text-xs text-muted-foreground">Europe/Zurich</span>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <EntryDateTime label="Début" value={start} onChange={setStart} precise={precise} />
-              <EntryDateTime label="Fin" value={end} onChange={setEnd} precise={precise} disabled={running} />
+              <EntryDateTime label="Début" value={form.start} onChange={start => edit({start})} precise={precise} />
+              <EntryDateTime label="Fin" value={form.end} onChange={end => edit({end})} precise={precise} disabled={form.running} />
             </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-              <span className="text-sm font-medium">
-                {running ? "Chrono en cours" : timing && timing.seconds >= 0 ? "Durée : " + duration(timing.seconds, precise) : "Vérifiez les horaires"}
-              </span>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Checkbox checked={precise} onCheckedChange={v => setPrecise(!!v)} />
-                Afficher les secondes
+            <div className="mt-4 flex items-center justify-between">
+              <span>{form.running ? "Chrono en cours" : timing ? "Durée : " + duration(timing.seconds, precise) : "Vérifiez les horaires"}</span>
+              <label className="flex items-center gap-2 text-xs">
+                <Checkbox checked={precise} onCheckedChange={v => setPrecise(!!v)} /> Afficher les secondes
               </label>
             </div>
           </div>
-          {entry?.end === null && (
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={running}
-                onCheckedChange={(v) => setRunning(!!v)}
-              />
-              Laisser le chrono en cours
-            </label>
-          )}
-          {(timing?.overlap || serverOverlap) && <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
-            <Checkbox
-              checked={confirmOverlap}
-              onCheckedChange={(v) => setConfirm(!!v)}
-            />
-            <span>Ce créneau chevauche un autre de vos temps. Je confirme que ce chevauchement est voulu.</span>
+          {entry?.end === null && <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={form.running} onCheckedChange={v => edit({running: !!v})} /> Laisser le chrono en cours
           </label>}
-          {stale && (
-            <ErrorMessage message="Cette entrée a été modifiée ailleurs. Fermez puis rouvrez-la avant d’enregistrer." />
-          )}
-          {entry?.end === null && (
-            <p id={deleteHintId} className="text-xs text-muted-foreground">
-              Arrêtez le chrono avant de supprimer ce temps.
-            </p>
-          )}
-        </AsyncForm>
+          {(confirmOverlap || timing?.overlap || draft?.error?.includes("chevauche")) && <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={confirmOverlap} onCheckedChange={v => {
+              setConfirm(!!v);
+              if (v) edit({start: form.start, end: form.end}, true);
+            }} /> Ce créneau chevauche un autre de vos temps. Je confirme que ce chevauchement est voulu.
+          </label>}
+          </fieldset>
+          <ErrorMessage message={deleted ? "Ce temps a été supprimé." : invalid || (Object.keys(held).length ? "Brouillon à compléter." : "")} />
+          {Object.keys(held).length > 0 && <Button variant="ghost" onClick={() => { hold({}); setInvalid(""); }}>Écarter le brouillon</Button>}
+          <SaveStatus draftKey={draftKey} entry={entry} />
+          {entry?.end === null && <p id={deleteHintId} className="text-xs text-muted-foreground">Arrêtez le chrono avant de supprimer ce temps.</p>}
+          <div className="flex justify-end gap-2">
+            {entry && <Button type="button" variant="destructive" className="mr-auto" aria-label="Supprimer ce temps"
+              aria-describedby={entry.end === null ? deleteHintId : undefined}
+              disabled={deleted || entry.end === null || deleting} onClick={async () => {
+                try { const saved = await saves.flush(draftKey); setConfirmDelete(saved && saved.version > entry.version ? saved : entry); }
+                catch { /* resolve the pending correction before deletion */ }
+              }}><Trash2 /> Supprimer</Button>}
+            <Button type="button" variant="outline" onClick={() => void close()}>Fermer</Button>
+          </div>
+        </div>
       </Modal>
       {confirmDelete && entry && (
         <Modal
           title="Supprimer ce temps ?"
           description="Cette entrée sera retirée des rapports. Son historique sera conservé."
-          onClose={() => { if (!deleting) setConfirmDelete(false); }}
+          onClose={() => { if (!deleting) setConfirmDelete(null); }}
         >
           <AsyncForm
             submitLabel="Supprimer"
             destructive
-            onCancel={() => setConfirmDelete(false)}
+            onCancel={() => setConfirmDelete(null)}
             onSubmit={async () => {
-              if (stale)
-                throw Error("Cette entrée a changé. Fermez cette fenêtre puis rouvrez la version actualisée.");
+              if (deleted) throw Error("Ce temps a été supprimé.");
               if (entry.end === null || entry.user_id !== state.me.id)
                 throw Error("Seuls vos temps arrêtés peuvent être supprimés.");
               setDeleting(true);
               try {
-                await deleteEntry(entry, mutate);
+                await deleteEntry(confirmDelete, mutate);
+                hold({}); saves.clear(draftKey);
                 onClose();
               } finally { setDeleting(false); }
             }}
@@ -405,10 +366,10 @@ export function EntryEditor({
       {createTask && (
         <CatalogEditor
           kind="tasks"
-          initialProject={projectId}
+          initialProject={form.project_id ?? ""}
           onClose={() => setCreateTask(false)}
           onCreated={(t) => {
-            void chooseClassification(t.id, t.project_id, "task");
+            edit({ task_id: t.id, project_id: t.project_id });
           }}
         />
       )}
@@ -437,14 +398,34 @@ export function EntryHistory({
   entry: Entry;
   onClose: () => void;
 }) {
+  const { state } = useWorkspace();
+  function summary(action: string, before: Partial<Entry> | null, after: Partial<Entry> | null) {
+    if (action === "delete") return "Pointage supprimé";
+    if (action === "restore") return "Pointage rétabli";
+    if (!before) return "Pointage créé";
+    if (!after) return "Pointage supprimé";
+    const details: string[] = [];
+    if (before.task_id !== after.task_id) {
+      const name = (id?: string | null) => state.tasks.find(t => t.id === id)?.name ?? (id ? "Tâche retirée" : "Sans tâche");
+      details.push("Tâche : " + name(before.task_id) + " → " + name(after.task_id));
+    }
+    if (before.project_id !== after.project_id) {
+      const name = (id?: string | null) => state.projects.find(p => p.id === id)?.name ?? (id ? "Projet retiré" : "Sans projet");
+      details.push("Projet : " + name(before.project_id) + " → " + name(after.project_id));
+    }
+    if (before.description !== after.description) details.push("Description modifiée");
+    if (before.start !== after.start) details.push("Début corrigé");
+    if (before.end !== after.end) details.push(before.end === null ? "Chrono arrêté" : "Fin corrigée");
+    return details.join(" · ") || "Pointage mis à jour";
+  }
   const [items, setItems] = useState<
       {
         id: string;
         actor_name: string;
         at: number;
         action: string;
-        before: unknown;
-        after: unknown;
+        before: Partial<Entry> | null;
+        after: Partial<Entry> | null;
       }[]
     >([]),
     [error, setError] = useState("");
@@ -475,7 +456,7 @@ export function EntryHistory({
         {items.map((i) => (
           <details key={i.id} className="rounded-lg border p-4">
             <summary className="cursor-pointer text-sm">
-              <b>{i.actor_name}</b> · {i.action}{" "}
+              <b>{i.actor_name}</b> · {summary(i.action, i.before, i.after)}{" "}
               <span className="text-muted-foreground">
                 {prettyDay(dayKey(i.at), true)} à {clockTime(i.at)}
               </span>
